@@ -14,7 +14,15 @@ The discovery commands (`assess`, `map`, `extract-rules`) build artifacts under 
 
 ## Expected layout
 
-Commands assume the system being modernized lives at `legacy/<system-dir>/`. Discovery artifacts go to `analysis/<system-dir>/`, transformed code to `modernized/<system-dir>/…`. Adjust the paths in the commands or symlink if your layout differs.
+Commands take a `<system-dir>` argument and assume the system being modernized lives at `legacy/<system-dir>/`. Discovery artifacts go to `analysis/<system-dir>/`, transformed code to `modernized/<system-dir>/…`. If your codebase lives elsewhere, symlink it in:
+
+```bash
+mkdir -p legacy && ln -s /path/to/your/legacy/codebase legacy/billing
+```
+
+## Optional tooling
+
+`/modernize-assess` works best with [`scc`](https://github.com/boyter/scc) (LOC + complexity + COCOMO) or [`cloc`](https://github.com/AlDanial/cloc), and falls back to `find`/`wc` if neither is installed. Portfolio mode also benefits from [`lizard`](https://github.com/terryyin/lizard) (cyclomatic complexity). The commands degrade gracefully without them, but the metrics will be coarser.
 
 ## Commands
 
@@ -24,7 +32,7 @@ The commands are designed to be run in order, but each produces a standalone art
 Inventory the legacy codebase: languages, line counts, complexity, build system, integrations, technical debt, security posture, documentation gaps, and a COCOMO-derived effort estimate. Produces `analysis/<system>/ASSESSMENT.md` and `analysis/<system>/ARCHITECTURE.mmd`. Spawns `legacy-analyst` (×2) and `security-auditor` in parallel for deep reads. With `--portfolio`, sweeps every subdirectory of a parent directory and writes a sequencing heat-map to `analysis/portfolio.html`.
 
 ### `/modernize-map <system-dir>`
-Build a dependency and topology map of the **legacy** system: program/module call graph, data lineage (programs ↔ data stores), entry points, dead-end candidates, and one traced critical-path business flow. Writes a re-runnable extraction script and produces `analysis/<system>/TOPOLOGY.html` (rendered Mermaid + architect observations) plus standalone `call-graph.mmd`, `data-lineage.mmd`, and `critical-path.mmd`.
+Build a dependency and topology map of the **legacy** system: program/module call graph, data lineage (programs ↔ data stores), entry points, dead-end candidates, and one traced critical-path business flow. Writes a re-runnable extraction script and produces `analysis/<system>/topology.json` (machine-readable), `analysis/<system>/TOPOLOGY.html` (rendered Mermaid + architect observations), and standalone `call-graph.mmd`, `data-lineage.mmd`, and `critical-path.mmd`.
 
 ### `/modernize-extract-rules <system-dir> [module-pattern]`
 Mine the business rules embedded in the legacy code — calculations, validations, eligibility, state transitions, policies — into Given/When/Then "Rule Cards" with `file:line` citations and confidence ratings. Spawns three `business-rules-extractor` agents in parallel (calculations, validations, lifecycle). Produces `analysis/<system>/BUSINESS_RULES.md` and `analysis/<system>/DATA_OBJECTS.md`.

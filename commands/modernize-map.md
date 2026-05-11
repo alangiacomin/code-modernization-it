@@ -11,19 +11,44 @@ connect? This is the map an engineer needs before touching anything.
 ## What to produce
 
 Write a one-off analysis script (Python or shell — your choice) that parses
-the source under `legacy/$1` and extracts:
+the source under `legacy/$1` and extracts the four datasets below. Cover
+the parse targets that are real for the stack you're looking at — these are
+the ones LLMs reliably miss:
 
-- **Program/module call graph** — who calls whom (for COBOL: `CALL` statements
-  and CICS `LINK`/`XCTL`; for Java: class-level imports/invocations; for Node:
-  `require`/`import`)
-- **Data dependency graph** — which programs read/write which data stores
-  (COBOL: copybooks + VSAM/DB2 in JCL DD statements; Java: JPA entities/tables;
-  Node: model files)
-- **Entry points** — batch jobs, transaction IDs, HTTP routes, CLI commands
-- **Dead-end candidates** — modules with no inbound edges (potential dead code)
+- **Program/module call graph** — who calls whom.
+  - COBOL/CICS: `CALL '...'` and `EXEC CICS LINK/XCTL PROGRAM(...)`. Most
+    `PROGRAM(...)` targets are **data-names, not literals** — resolve them
+    against working-storage `VALUE` clauses and any menu/route copybooks
+    before declaring an edge unresolvable.
+  - Java: class-level imports/invocations. Node: `require`/`import`.
+- **Data dependency graph** — which programs read/write which data stores.
+  - COBOL batch: `SELECT ... ASSIGN TO <ddname>` joined with JCL `DD`
+    statements (this is the *only* way to attribute file I/O to a program).
+  - COBOL/CICS online: `EXEC CICS READ/WRITE/REWRITE/DELETE/STARTBR/READNEXT/
+    READPREV ... FILE(...)` joined with `DEFINE FILE` in the CSD.
+  - DB2: `EXEC SQL ... END-EXEC` table references — *not* JCL DD; DB2 access
+    is via plan/package binds.
+  - BMS: `SEND MAP`/`RECEIVE MAP` ↔ map source under `bms/` and copybooks
+    under `cpy-bms/` (or wherever the maps live).
+  - Java: JPA/MyBatis entities & tables. Node: model files.
+- **Entry points** — whatever the stack's outermost invokers are. Mainframe:
+  JCL `EXEC PGM=` steps **and** CICS `DEFINE TRANSACTION ... PROGRAM(...)`
+  from the CSD — without the CSD, every online program looks unreachable.
+  Web: HTTP routes. CLI: argv parsing.
+- **Dead-end candidates** — modules with no inbound edges. **Only trust this
+  once the entry-point and call-edge types above are all in the graph**, and
+  suppress the dead claim for any module that could be the target of an
+  unresolved dynamic call. A naive grep-only graph will mark most CICS
+  programs dead.
+
+For COBOL fixed-format, slice columns 8-72 and skip `*` indicator lines
+(column 7) before regex matching, or you'll match sequence numbers and
+commented-out code.
 
 Save the script as `analysis/$1/extract_topology.py` (or `.sh`) so it can be
-re-run and audited. Run it. Show the raw output.
+re-run and audited. Have it write a machine-readable
+`analysis/$1/topology.json` and print a human summary. Run it; show the
+summary (cap at ~200 lines for very large estates).
 
 ## Render
 

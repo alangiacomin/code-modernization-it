@@ -11,20 +11,28 @@ engineer can fix.
 
 ## Coverage checklist
 
-Work through systematically:
-- **Injection** (SQL, NoSQL, OS command, LDAP, XPath, template) — trace every
-  user-controlled input to every sink
+Adapt to the target stack — web items don't apply to a batch COBOL system,
+mainframe items don't apply to a SPA. Work through what's relevant:
+
+- **Injection** (SQL, NoSQL, OS command, LDAP, XPath, template, dynamic
+  DB2 SQL, JCL/PARM injection) — trace every user-controlled input to every sink
 - **Authentication / session** — hardcoded creds, weak session handling,
-  missing auth checks on sensitive routes
-- **Sensitive data exposure** — secrets in source, weak crypto, PII in logs
-- **Access control** — IDOR, missing ownership checks, privilege escalation paths
-- **XSS / CSRF** — unescaped output, missing tokens
+  missing auth checks on sensitive routes/transactions
+- **Sensitive data exposure** — secrets in source, weak crypto, PII/PAN/SSN in
+  logs, cleartext data in copybooks/flat files
+- **Access control** — IDOR, missing ownership checks, privilege escalation;
+  for CICS: missing/permissive RACF transaction & resource definitions,
+  unguarded admin transactions
+- **XSS / CSRF** — unescaped output, missing tokens (web targets only)
 - **Insecure deserialization** — pickle/yaml.load/ObjectInputStream on
   untrusted data
 - **Vulnerable dependencies** — run `npm audit` / `pip-audit` /
   read manifests and flag versions with known CVEs
-- **SSRF / path traversal / open redirect**
-- **Security misconfiguration** — debug mode, verbose errors, default creds
+- **SSRF / path traversal / open redirect** (web targets only)
+- **Input validation** — for CICS/3270: unvalidated BMS field input,
+  missing length/range/format checks before file/DB writes
+- **Security misconfiguration** — debug mode, verbose errors, default creds,
+  hardcoded passwords/userids in JCL, PROCs, or sign-on programs
 
 ## Tooling
 

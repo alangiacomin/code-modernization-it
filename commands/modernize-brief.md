@@ -37,8 +37,11 @@ fewest-dependencies first. For each phase:
 Render the phases as a Mermaid `gantt` chart.
 
 ### 4. Behavior Contract
-List the **P0 behaviors** from BUSINESS_RULES.md that MUST be proven
-equivalent before any phase ships. These become the regression suite.
+List the **P0 rules** from BUSINESS_RULES.md (the ones tagged `Priority: P0` —
+money, regulatory, data integrity) that MUST be proven equivalent before any
+phase ships. These become the regression suite. Flag any P0 rule with
+Confidence < High as a blocker requiring SME confirmation before its phase
+starts.
 
 ### 5. Validation Strategy
 State which combination applies: characterization tests, contract tests,

@@ -23,6 +23,10 @@ cloc --quiet --csv <parent>/<sys>          # LOC by language
 lizard -s cyclomatic_complexity <parent>/<sys> 2>/dev/null | tail -1
 ```
 
+If `cloc`/`lizard` are not installed, fall back to `scc <parent>/<sys>`
+(LOC + complexity) or `find` + `wc -l` grouped by extension, and estimate
+complexity by counting decision keywords per file. Note which tool you used.
+
 Capture: total SLOC, dominant language, file count, mean & max
 cyclomatic complexity (CCN). For dependency freshness, locate the
 manifest (`package.json`, `pom.xml`, `*.csproj`, `requirements*.txt`,
@@ -69,6 +73,17 @@ scc legacy/$1
 Then run `scc --by-file -s complexity legacy/$1 | head -25` to identify the
 highest-complexity files. Capture the COCOMO effort/cost estimate scc provides.
 
+If `scc` is not installed, fall back in order:
+1. `cloc legacy/$1` for the LOC table, then compute COCOMO-II effort
+   yourself: `PM = 2.94 × (KSLOC)^1.10` (nominal scale factors). Show the
+   inputs.
+2. If `cloc` is also missing, use `find` + `wc -l` grouped by extension
+   for LOC, and rank file complexity by counting decision keywords
+   (`IF`/`EVALUATE`/`WHEN`/`PERFORM` for COBOL; `if`/`for`/`while`/`case`/
+   `catch` for C-family). Compute COCOMO from KSLOC as above.
+
+Note in the assessment which tool was used so the figures are reproducible.
+
 ## Step 2 — Technology fingerprint
 
 Identify, with file evidence:
@@ -80,12 +95,15 @@ Identify, with file evidence:
 
 ## Step 3 — Parallel deep analysis
 
-Spawn three subagents **concurrently** using the Task tool:
+Spawn three subagents **in parallel**:
 
 1. **legacy-analyst** — "Build a structural map of legacy/$1: what are the
-   5-10 major functional domains, which source files belong to each, and how
-   do they depend on each other? Return a markdown table + a Mermaid
-   `graph TD` of domain-level dependencies. Cite file paths."
+   5-12 major functional domains (group optional/feature-gated subsystems
+   under one umbrella), which source files belong to each, and how do they
+   depend on each other (control flow + shared data)? Return a markdown
+   table + a Mermaid `graph TD` of domain-level dependencies — use
+   `subgraph` to cluster and cap at ~40 edges. Cite repo-relative file
+   paths. Flag dangling references (defined but no source, or unused)."
 
 2. **legacy-analyst** — "Identify technical debt in legacy/$1: dead code,
    deprecated APIs, copy-paste duplication, god objects/programs, missing
