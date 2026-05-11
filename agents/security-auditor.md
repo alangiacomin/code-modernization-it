@@ -11,28 +11,29 @@ engineer can fix.
 
 ## Coverage checklist
 
-Adapt to the target stack — web items don't apply to a batch COBOL system,
-mainframe items don't apply to a SPA. Work through what's relevant:
+Adapt to the target stack — web items don't apply to a batch system,
+terminal/screen items don't apply to a SPA. Work through what's relevant:
 
-- **Injection** (SQL, NoSQL, OS command, LDAP, XPath, template, dynamic
-  DB2 SQL, JCL/PARM injection) — trace every user-controlled input to every sink
+- **Injection** (SQL, NoSQL, OS command, LDAP, XPath, template) — trace every
+  user-controlled input to every sink, including dynamic SQL and shell-outs
 - **Authentication / session** — hardcoded creds, weak session handling,
-  missing auth checks on sensitive routes/transactions
-- **Sensitive data exposure** — secrets in source, weak crypto, PII/PAN/SSN in
-  logs, cleartext data in copybooks/flat files
+  missing auth checks on sensitive routes/transactions/jobs
+- **Sensitive data exposure** — secrets in source, weak crypto, PII in logs,
+  cleartext sensitive data in record layouts, flat files, or temp datasets
 - **Access control** — IDOR, missing ownership checks, privilege escalation;
-  for CICS: missing/permissive RACF transaction & resource definitions,
-  unguarded admin transactions
-- **XSS / CSRF** — unescaped output, missing tokens (web targets only)
-- **Insecure deserialization** — pickle/yaml.load/ObjectInputStream on
-  untrusted data
+  missing/permissive resource ACLs (RACF profiles, IAM policies, file perms);
+  unguarded admin functions
+- **XSS / CSRF** — unescaped output, missing tokens (web targets)
+- **Insecure deserialization** — untrusted data into pickle/yaml.load/
+  `ObjectInputStream` or custom record parsers
 - **Vulnerable dependencies** — run `npm audit` / `pip-audit` /
   read manifests and flag versions with known CVEs
-- **SSRF / path traversal / open redirect** (web targets only)
-- **Input validation** — for CICS/3270: unvalidated BMS field input,
-  missing length/range/format checks before file/DB writes
+- **SSRF / path traversal / open redirect** (web/network targets)
+- **Input validation** — missing length/range/format checks at trust
+  boundaries (form/screen fields, API params, batch input records) before
+  persistence or downstream calls
 - **Security misconfiguration** — debug mode, verbose errors, default creds,
-  hardcoded passwords/userids in JCL, PROCs, or sign-on programs
+  hardcoded credentials in deployment scripts, job definitions, or config
 
 ## Tooling
 

@@ -10,7 +10,7 @@ Legacy modernization fails most often not because the target technology is wrong
 assess → map → extract-rules → brief → reimagine | transform → harden
 ```
 
-The discovery commands (`assess`, `map`, `extract-rules`) build artifacts under `analysis/<system>/`. The `brief` command synthesizes them into an approval gate. The build commands (`reimagine`, `transform`) write new code under `modernized/`. The `harden` command audits and patches the legacy system. Each step has a dedicated slash command, and specialist agents (legacy analyst, business rules extractor, architecture critic, security auditor, test engineer) are invoked from within those commands — or directly — to keep the work honest.
+The discovery commands (`assess`, `map`, `extract-rules`) build artifacts under `analysis/<system>/`. The `brief` command synthesizes them into an approval gate. The build commands (`reimagine`, `transform`) write new code under `modernized/`. The `harden` command audits the legacy system and produces a reviewable remediation patch. Each step has a dedicated slash command, and specialist agents (legacy analyst, business rules extractor, architecture critic, security auditor, test engineer) are invoked from within those commands — or directly — to keep the work honest.
 
 ## Expected layout
 
@@ -47,9 +47,7 @@ Greenfield rebuild from extracted intent rather than a structural port. Mines a 
 Surgical, single-module strangler-fig rewrite. Plans first (HITL gate), then writes characterization tests via `test-engineer`, then an idiomatic target implementation under `modernized/<system>/<module>/`, proves equivalence by running the tests, and produces `TRANSFORMATION_NOTES.md` mapping legacy → modern with deliberate deviations called out. Reviewed by `architecture-critic`.
 
 ### `/modernize-harden <system-dir>`
-Security hardening pass on the **legacy** system: OWASP/CWE scan, dependency CVEs, secrets, injection. Spawns `security-auditor`. Produces `analysis/<system>/SECURITY_FINDINGS.md` ranked Critical / High / Medium / Low, then **patches Critical and High findings directly in `legacy/<system>/`** and re-scans to verify. Useful as a pre-modernization step when the legacy system will keep running in production during the migration.
-
-> **Note:** `/modernize-harden` is the one command that edits `legacy/`. If you adopt the `deny: Edit(legacy/**)` workspace setting below, relax it for this command — or run hardening as a separate workstream against its own checkout.
+Security hardening pass on the **legacy** system: OWASP/CWE scan, dependency CVEs, secrets, injection. Spawns `security-auditor`. Produces `analysis/<system>/SECURITY_FINDINGS.md` ranked Critical / High / Medium / Low and a reviewed `analysis/<system>/security_remediation.patch` with minimal fixes for the Critical/High findings. The patch is reviewed by a second `security-auditor` pass before you see it. **Never edits `legacy/`** — you review and apply the patch yourself when ready, then re-run to verify. Useful as a pre-modernization step when the legacy system will keep running in production during the migration.
 
 ## Agents
 
@@ -89,7 +87,7 @@ This plugin ships commands and agents, but modernization projects benefit from a
 }
 ```
 
-Adjust `legacy/` and `modernized/` to match your actual layout. The key invariants: `Edit` under `legacy/` is denied, and writes are scoped to `analysis/` (for documents) and `modernized/` (for the new code). The exception is `/modernize-harden`, which intentionally patches `legacy/` — see its note above.
+Adjust `legacy/` and `modernized/` to match your actual layout. The key invariants: `Edit` under `legacy/` is denied, and writes are scoped to `analysis/` (for documents) and `modernized/` (for the new code). Every command in this plugin respects this — `/modernize-harden` writes a patch to `analysis/` rather than editing `legacy/` in place.
 
 ## Typical Workflow
 

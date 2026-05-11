@@ -11,39 +11,44 @@ connect? This is the map an engineer needs before touching anything.
 ## What to produce
 
 Write a one-off analysis script (Python or shell — your choice) that parses
-the source under `legacy/$1` and extracts the four datasets below. Cover
-the parse targets that are real for the stack you're looking at — these are
-the ones LLMs reliably miss:
+the source under `legacy/$1` and extracts the four datasets below. Three
+principles apply across stacks; getting them wrong produces a misleading map:
 
-- **Program/module call graph** — who calls whom.
-  - COBOL/CICS: `CALL '...'` and `EXEC CICS LINK/XCTL PROGRAM(...)`. Most
-    `PROGRAM(...)` targets are **data-names, not literals** — resolve them
-    against working-storage `VALUE` clauses and any menu/route copybooks
-    before declaring an edge unresolvable.
-  - Java: class-level imports/invocations. Node: `require`/`import`.
-- **Data dependency graph** — which programs read/write which data stores.
-  - COBOL batch: `SELECT ... ASSIGN TO <ddname>` joined with JCL `DD`
-    statements (this is the *only* way to attribute file I/O to a program).
-  - COBOL/CICS online: `EXEC CICS READ/WRITE/REWRITE/DELETE/STARTBR/READNEXT/
-    READPREV ... FILE(...)` joined with `DEFINE FILE` in the CSD.
-  - DB2: `EXEC SQL ... END-EXEC` table references — *not* JCL DD; DB2 access
-    is via plan/package binds.
-  - BMS: `SEND MAP`/`RECEIVE MAP` ↔ map source under `bms/` and copybooks
-    under `cpy-bms/` (or wherever the maps live).
-  - Java: JPA/MyBatis entities & tables. Node: model files.
-- **Entry points** — whatever the stack's outermost invokers are. Mainframe:
-  JCL `EXEC PGM=` steps **and** CICS `DEFINE TRANSACTION ... PROGRAM(...)`
-  from the CSD — without the CSD, every online program looks unreachable.
-  Web: HTTP routes. CLI: argv parsing.
-- **Dead-end candidates** — modules with no inbound edges. **Only trust this
-  once the entry-point and call-edge types above are all in the graph**, and
-  suppress the dead claim for any module that could be the target of an
-  unresolved dynamic call. A naive grep-only graph will mark most CICS
-  programs dead.
+1. **Edges live in two places** — direct calls in source, *and* dispatcher/
+   router calls whose targets are variables (config tables, route maps,
+   dependency injection, dynamic dispatch). Resolve variables against config
+   before declaring an edge unresolvable.
+2. **The code↔storage join is usually external configuration**, not source —
+   job/deployment descriptors map logical names to physical stores.
+3. **Entry points usually live in deployment config**, not source — without
+   parsing it, every top-level module looks unreachable.
 
-For COBOL fixed-format, slice columns 8-72 and skip `*` indicator lines
-(column 7) before regex matching, or you'll match sequence numbers and
-commented-out code.
+Extract:
+
+- **Program/module call graph** — direct calls (`CALL`, method invocations,
+  `import`/`require`) *and* dispatcher calls (`EXEC CICS LINK/XCTL`, DI
+  container wiring, framework routing, reflection/factory). Resolve variable
+  call targets against route tables, copybooks, config, or constant pools.
+- **Data dependency graph** — which modules read/write which data stores,
+  joined through the relevant config: `SELECT…ASSIGN TO` ↔ JCL `DD` (batch
+  COBOL), `EXEC CICS READ/WRITE…FILE()` ↔ CSD `DEFINE FILE` (CICS online),
+  `EXEC SQL` table refs (embedded SQL), ORM annotations/mappings (Java/.NET),
+  model files (Node/Python/Ruby). Include UI/screen bindings (BMS maps, JSPs,
+  templates) — they're dependencies too.
+- **Entry points** — whatever the stack's outermost invoker is, read from
+  where it's defined: JCL `EXEC PGM=` and CICS CSD `DEFINE TRANSACTION`
+  (mainframe), `web.xml`/route annotations/route files (web), `main()`/argv
+  parsing (CLI), queue/scheduler subscriptions (event-driven).
+- **Dead-end candidates** — modules with no inbound edges. **Only meaningful
+  once all the entry-point and call-edge types above are in the graph.**
+  Suppress the dead claim for anything that could be the target of an
+  unresolved dynamic call. A grep-only graph will mark most dispatcher-driven
+  modules (CICS programs, Spring controllers, ORM-bound DAOs) dead when they
+  aren't.
+
+If the source is fixed-column (COBOL columns 8–72, RPG, etc.), slice the
+code area and strip comment lines before regex matching, or you'll match
+sequence numbers and commented-out code.
 
 Save the script as `analysis/$1/extract_topology.py` (or `.sh`) so it can be
 re-run and audited. Have it write a machine-readable
