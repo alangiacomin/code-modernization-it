@@ -28,14 +28,22 @@ re-run and audited. Run it. Show the raw output.
 ## Render
 
 From the extracted data, generate **three Mermaid diagrams** and write them
-to `analysis/$1/TOPOLOGY.html` so the artifact pane renders them live.
+to `analysis/$1/TOPOLOGY.html` as a self-contained page that renders in any
+browser.
 
 The HTML page must use: dark `#1e1e1e` background, `#d4d4d4` text,
 `#cc785c` for `<h2>`/accents, `system-ui` font, all CSS **inline** (no
-external stylesheets). Each diagram goes in a
-`<pre class="mermaid">...</pre>` block — the artifact server loads
-mermaid.js and renders client-side. Do **not** wrap diagrams in
-markdown ` ``` ` fences inside the HTML.
+external stylesheets). Load Mermaid from a CDN in `<head>`:
+
+```html
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({ startOnLoad: true, theme: 'dark' });
+</script>
+```
+
+Each diagram goes in a `<pre class="mermaid">...</pre>` block. Do **not**
+wrap diagrams in markdown ` ``` ` fences inside the HTML.
 
 1. **`graph TD` — Module call graph.** Cluster by domain (use `subgraph`).
    Highlight entry points in a distinct style. Cap at ~40 nodes — if larger,
@@ -46,9 +54,9 @@ markdown ` ``` ` fences inside the HTML.
 
 3. **`flowchart TD` — Critical path.** Trace ONE end-to-end business flow
    (e.g., "monthly billing run" or "process payment") through every program
-   and data store it touches, in execution order. If the `observability`
-   MCP server is connected, annotate each batch step with its p50/p99
-   wall-clock from `get_batch_runtimes`.
+   and data store it touches, in execution order. If production telemetry is
+   available (see `/modernize-assess` Step 4), annotate each step with its
+   p50/p99 wall-clock.
 
 Also export the three diagrams as standalone `.mmd` files for re-use:
 `analysis/$1/call-graph.mmd`, `analysis/$1/data-lineage.mmd`,
@@ -63,4 +71,4 @@ touched by too many writers.
 
 ## Present
 
-Tell the user to open `analysis/$1/TOPOLOGY.html` in the artifact pane.
+Tell the user to open `analysis/$1/TOPOLOGY.html` in a browser.
