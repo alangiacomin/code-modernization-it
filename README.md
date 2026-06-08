@@ -40,6 +40,9 @@ Environment readiness check, meant to run first: detects the legacy stack, check
 Inventory the legacy codebase: languages, line counts, complexity, build system, integrations, technical debt, security posture, documentation gaps, and a COCOMO-derived effort estimate. Produces `analysis/<system>/ASSESSMENT.md` and `analysis/<system>/ARCHITECTURE.mmd`. Spawns `legacy-analyst` (×2) and `security-auditor` in parallel for deep reads. With `--portfolio`, sweeps every subdirectory of a parent directory and writes a sequencing heat-map to `analysis/portfolio.html`.
 
 ### `/modernize-map <system-dir>`
+
+![Interactive topology map of AWS CardDemo — domains as containers, modules sized by lines of code, dependency edges colored by kind, entry points ringed](assets/topology-viewer-screenshot.jpg)
+
 Build a dependency and topology map of the **legacy** system: program/module call graph, data lineage (programs ↔ data stores), entry points, dead-end candidates, and 2–4 traced business flows each anchored to a persona (the claimant, the operator, the auditor — not the maintainer). Writes a re-runnable extraction script and produces `analysis/<system>/topology.json` plus `analysis/<system>/TOPOLOGY.html` — an **interactive zoomable map** (circle-pack of domains/modules sized by LOC, dependency edges with per-kind toggles, search, click-for-details sidebar, and a walkthrough mode that plays each persona flow as a numbered path with a plain-language narrative). Built from a template shipped with the plugin, so it works on systems far too dense for a static diagram. Small domain-level `call-graph.mmd`, `data-lineage.mmd`, and `critical-path.mmd` are still exported for docs and PRs.
 
 ### `/modernize-extract-rules <system-dir> [module-pattern]`
