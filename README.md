@@ -24,6 +24,10 @@ mkdir -p legacy && ln -s /path/to/your/legacy/codebase legacy/billing
 
 `/modernize-assess` works best with [`scc`](https://github.com/boyter/scc) (LOC + complexity + COCOMO) or [`cloc`](https://github.com/AlDanial/cloc), and falls back to `find`/`wc` if neither is installed. Portfolio mode also benefits from [`lizard`](https://github.com/terryyin/lizard) (cyclomatic complexity). The commands degrade gracefully without them, but the metrics will be coarser.
 
+## Secret handling
+
+Legacy systems routinely contain live credentials, and assessment artifacts get committed and shared. `/modernize-assess` and `/modernize-harden` therefore **never write discovered credential values into findings files** — findings cite `file:line` with a masked preview (`AKIA****`). When credentials are found, a per-credential inventory (type, location, blast radius, rotation recommendation) is written to `analysis/<system>/SECRETS.local.md`, which the commands gitignore before writing. Pass `--show-secrets` to include raw values in that quarantine file (and only there). If you ran an earlier version of this plugin on a real system, check whether `analysis/` artifacts containing credentials were committed or shared, and rotate anything that was.
+
 ## Commands
 
 The commands are designed to be run in order, but each produces a standalone artifact so you can stop, review, and resume.

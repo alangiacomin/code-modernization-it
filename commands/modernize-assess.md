@@ -1,6 +1,6 @@
 ---
 description: Full discovery & portfolio analysis of a legacy system — inventory, complexity, debt, effort estimation
-argument-hint: <system-dir> | --portfolio <parent-dir>
+argument-hint: <system-dir> [--show-secrets] | --portfolio <parent-dir>
 ---
 
 **Mode select.** If `$ARGUMENTS` starts with `--portfolio`, run **Portfolio
@@ -113,7 +113,9 @@ Spawn three subagents **in parallel**:
 3. **security-auditor** — "Scan legacy/$1 for security vulnerabilities:
    injection, auth weaknesses, hardcoded secrets, vulnerable dependencies,
    missing input validation. Return findings in CWE-tagged table form with
-   file:line evidence and severity."
+   file:line evidence and severity. Mask every discovered credential value
+   per your secret-handling rules — file:line plus a 2–4 character masked
+   preview, never the value itself."
 
 Wait for all three. Synthesize their findings.
 
@@ -140,6 +142,23 @@ the top 5 undocumented behaviors or subsystems that a new engineer would
 need explained.
 
 ## Step 6 — Write the assessment
+
+**Secrets quarantine first.** The assessment gets shared and committed —
+discovered credential values must never appear in it. If the
+security-auditor found any hardcoded credentials:
+
+1. Ensure `analysis/.gitignore` exists and contains the line
+   `SECRETS.local.md` (create or append as needed). If the project is a
+   git repo, verify with `git check-ignore -q analysis/$1/SECRETS.local.md`
+   before writing any findings.
+2. Write `analysis/$1/SECRETS.local.md`: one row per credential — masked
+   preview, `file:line`, credential type, what it grants access to,
+   production/test guess, rotation recommendation. Only if the user passed
+   `--show-secrets`, add the raw value column here — this file only, never
+   ASSESSMENT.md.
+3. In ASSESSMENT.md, the Security Findings section lists credential
+   findings with masked values only, plus a one-line pointer:
+   "Credential inventory in SECRETS.local.md (gitignored; not for sharing)."
 
 Create `analysis/$1/ASSESSMENT.md` with these sections:
 - **Executive Summary** (3-4 sentences: what it is, how big, how risky, headline recommendation)
