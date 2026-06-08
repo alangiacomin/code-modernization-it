@@ -151,8 +151,10 @@ need explained.
 discovered credential values must never appear in it. If the
 security-auditor found any hardcoded credentials:
 
-1. Ensure `analysis/.gitignore` exists and contains the line
-   `SECRETS.local.md` (create or append as needed). If the project is a
+1. Ensure `analysis/.gitignore` exists and contains the lines
+   `SECRETS.local.md` and `*.local.patch` (create or append as needed —
+   the patch pattern is used by `/modernize-harden`; writing both now
+   means the ignore set is complete from first contact). If the project is a
    git repo, verify with `git check-ignore -q analysis/$1/SECRETS.local.md`
    — do not write any findings until the check passes. If there is **no
    git repo** (check for `.svn`/`.hg`/`CVS` too — a `.gitignore` protects
