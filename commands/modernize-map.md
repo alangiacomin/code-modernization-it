@@ -78,6 +78,7 @@ summary (cap at ~200 lines for very large estates).
     { "source": "<id>", "target": "<id>", "kind": "call" }
   ],
   "entryPoints": ["<id>", "..."],
+  "deadEnds": ["<id>", "..."],
   "observations": ["<architect observation>", "..."],
   "flows": [
     { "name": "<business flow>", "persona": "<who experiences it>",
@@ -94,9 +95,20 @@ summary (cap at ~200 lines for very large estates).
   `job`, `screen`. `loc` drives circle size — include it for modules.
 - Edge kinds: `call` (direct), `dispatch` (dynamic/router), `read`,
   `write`. Every edge endpoint must be a leaf id that exists in the tree.
+- `deadEnds`: the dead-end candidates from the extraction, rendered with
+  a dashed outline in the viewer. Apply the suppression rules above —
+  anything that could be the target of an unresolved dynamic call does
+  NOT belong here; record that uncertainty in `observations` instead.
+- **Datastore ids and names must be logical identifiers** — DD name,
+  dataset name, table/schema name, at most host:port. If the resolved
+  config value is a URL or DSN, strip userinfo and credential query
+  params before it goes anywhere in topology.json: the file gets
+  committed and the viewer displays names verbatim. Never copy raw
+  config values into `observations`.
 - `observations`: 3–7 architect observations — tight coupling clusters,
   single points of failure, service-extraction candidates, data stores
-  with too many writers.
+  with too many writers, dispatch targets the extraction could not
+  resolve.
 - `flows` is the **persona walkthrough** section — see below.
 
 ## Persona flows
@@ -140,11 +152,11 @@ print(f"wrote {out_dir}/TOPOLOGY.html")
 EOF
 ```
 
-The viewer loads d3 (version-pinned) from a CDN, so opening it needs
-one-time network access; the rest is self-contained and the page shows an
-explicit error if the CDN is unreachable. If the `python3` invocation
-fails to find the template, `${CLAUDE_PLUGIN_ROOT}` was not substituted —
-report that rather than hand-writing a viewer.
+The viewer is fully self-contained (the d3 subset it needs is inlined in
+the template) — it works offline and on air-gapped networks. If the
+`python3` invocation fails to find the template,
+`${CLAUDE_PLUGIN_ROOT}` was not substituted — report that rather than
+hand-writing a viewer.
 
 Mermaid stays for **small, exportable** diagrams. Generate standalone
 `.mmd` files for reuse in docs and PRs — but keep each under ~40 edges;

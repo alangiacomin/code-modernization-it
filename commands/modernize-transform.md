@@ -29,7 +29,8 @@ proof.
 ## Step 0b — Plan (HITL gate)
 
 Read the source module and any business rules in `analysis/$1/BUSINESS_RULES.md`
-that reference it. Then **enter plan mode** and present:
+that reference it. Then present the plan and **stop — write no code until
+the user explicitly approves** (use plan mode if the session supports it):
 - Which source files are in scope
 - The target module structure (packages/classes/files you'll create)
 - Which business rules / behaviors this module implements
@@ -47,7 +48,9 @@ identify every observable behavior, and encode each as a test case with
 concrete input → expected output pairs derived from the legacy logic.
 Target framework: <appropriate for $3>. Write to
 `modernized/$1/$2/src/test/`. These tests define 'done' — the new code
-must pass all of them."
+must pass all of them. Follow your secret-handling rules: no credential
+literal from legacy code becomes a fixture; substitute fake same-shape
+values and read anything genuinely live from environment variables."
 
 Show the user the test file. Get a 👍 before proceeding.
 
@@ -85,6 +88,10 @@ Then show a visual diff of one representative behavior, legacy vs modern:
 ```bash
 delta --side-by-side <(sed -n '<lines>p' legacy/$1/<file>) modernized/$1/$2/src/main/<file>
 ```
+(Fall back to `diff -y --width=160` if `delta` isn't installed.) Never
+pick a credential-bearing line range for this diff, and mask any
+credential-like literal quoted in TRANSFORMATION_NOTES.md — the notes
+live in `modernized/` and get committed.
 
 ## Step 5 — Architecture review
 

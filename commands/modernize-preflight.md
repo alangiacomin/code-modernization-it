@@ -30,6 +30,7 @@ used for, and what degrades without it:
 | `scc` (or `cloc`) | assess | LOC/complexity fall back to `find`+`wc`; COCOMO estimate gets coarser |
 | `lizard` | assess --portfolio | complexity estimated from decision-keyword counts |
 | `glow` | all | markdown artifacts render as plain text |
+| `delta` | transform | side-by-side diffs fall back to `diff -y` |
 
 Include the platform's install one-liner for anything missing
 (`brew install scc`, `apt install cloc`, `pip install lizard`, …).
@@ -85,6 +86,7 @@ followed by a **Ready / Ready-with-gaps / Not ready** verdict per command:
 
 - `assess` + `map` + `extract-rules` — need Checks 1–2 green-ish and
   Check 4's missing-include count low
+- `brief` — needs only the three discovery artifacts; no tooling
 - `transform` + `reimagine` — additionally need Check 3 green for both
   legacy and target stacks
 - `harden` — needs Check 2 plus any stack-specific SAST tooling found

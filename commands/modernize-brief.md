@@ -8,10 +8,19 @@ single document a steering committee approves and engineering executes.
 
 Target stack: `$2` (if blank, recommend one based on the assessment findings).
 
-Read `analysis/$1/ASSESSMENT.md`, `analysis/$1/TOPOLOGY.html` (and the `.mmd`
-files alongside it), and `analysis/$1/BUSINESS_RULES.md` first. If any are
-missing, say so and stop — they come from `/modernize-assess`, `/modernize-map`,
-and `/modernize-extract-rules` respectively. Run those first.
+Read `analysis/$1/ASSESSMENT.md`, `analysis/$1/topology.json` (plus the
+`.mmd` files alongside it — do NOT read `TOPOLOGY.html`, it's an
+interactive viewer with the data minified inside), and
+`analysis/$1/BUSINESS_RULES.md` first. If any are missing, say so and
+stop — they come from `/modernize-assess`, `/modernize-map`, and
+`/modernize-extract-rules` respectively. Run those first.
+
+**Staleness check:** compare modification times. If any input is newer
+than an existing `MODERNIZATION_BRIEF.md`, the brief is being justifiably
+regenerated; but if an existing brief is newer than all inputs and the
+user re-ran this command anyway, ask what changed. Either way, note the
+input timestamps in the brief's header so reviewers can see what it was
+built from.
 
 ## The Brief
 
@@ -31,7 +40,8 @@ fewest-dependencies first. For each phase:
 - Scope (which legacy modules, which target services)
 - Entry criteria (what must be true to start)
 - Exit criteria (what tests/metrics prove it's done)
-- Estimated effort (person-weeks, derived from COCOMO + complexity data)
+- Estimated effort (person-months, same unit as the assessment's COCOMO
+  figure — convert deliberately if you present weeks)
 - Risk level + top 2 risks + mitigation
 
 Render the phases as a Mermaid `gantt` chart.
@@ -69,6 +79,7 @@ Approval covers: Phase 1 only | Full plan
 
 ## Present
 
-Enter **plan mode** and present a summary of the brief. Do NOT proceed to any
-transformation until the user explicitly approves. This gate is the
-human-in-the-loop control point.
+Present a summary of the brief and **stop — write nothing further until
+the user explicitly approves** (use plan mode if the session supports
+it). This gate is the human-in-the-loop control point; "no objection" is
+not approval.

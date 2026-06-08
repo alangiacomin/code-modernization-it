@@ -54,6 +54,9 @@ Greenfield rebuild from extracted intent rather than a structural port. Mines a 
 ### `/modernize-transform <system-dir> <module> <target-stack>`
 Surgical, single-module strangler-fig rewrite. Plans first (HITL gate), then writes characterization tests via `test-engineer`, then an idiomatic target implementation under `modernized/<system>/<module>/`, proves equivalence by running the tests, and produces `TRANSFORMATION_NOTES.md` mapping legacy → modern with deliberate deviations called out. Reviewed by `architecture-critic`.
 
+### `/modernize-status <system-dir>`
+Read-only progress report: artifact inventory with timestamps per workflow stage, staleness flags (e.g. a brief older than the assessment it was built from), secrets-hygiene checks (quarantine file gitignored and never committed), and the single most useful next command. Run it anytime you come back to a modernization after a break.
+
 ### `/modernize-harden <system-dir>`
 Security hardening pass on the **legacy** system: OWASP/CWE scan, dependency CVEs, secrets, injection. Spawns `security-auditor`. Produces `analysis/<system>/SECURITY_FINDINGS.md` ranked Critical / High / Medium / Low and a reviewed `analysis/<system>/security_remediation.patch` with minimal fixes for the Critical/High findings. The patch is reviewed by a second `security-auditor` pass before you see it. **Never edits `legacy/`** — you review and apply the patch yourself when ready, then re-run to verify. Useful as a pre-modernization step when the legacy system will keep running in production during the migration.
 
@@ -89,17 +92,21 @@ This plugin ships commands and agents, but modernization projects benefit from a
       "Edit(modernized/**)"
     ],
     "deny": [
-      "Edit(legacy/**)"
+      "Edit(legacy/**)",
+      "Write(legacy/**)"
     ]
   }
 }
 ```
 
-Adjust `legacy/` and `modernized/` to match your actual layout. The key invariants: `Edit` under `legacy/` is denied, and writes are scoped to `analysis/` (for documents) and `modernized/` (for the new code). Every command in this plugin respects this — `/modernize-harden` writes a patch to `analysis/` rather than editing `legacy/` in place.
+Adjust `legacy/` and `modernized/` to match your actual layout. The key invariants: `Edit`/`Write` under `legacy/` are denied, and writes are scoped to `analysis/` (for documents) and `modernized/` (for the new code). Note this guards the file tools — shell commands that mutate files (`sed -i`, `git apply`) still go through the normal Bash permission prompt, so review those prompts with the same invariant in mind. Every command in this plugin respects this — `/modernize-harden` writes a patch to `analysis/` rather than editing `legacy/` in place.
 
 ## Typical Workflow
 
 ```bash
+# 0. Check the environment is ready (tools, toolchain, source completeness)
+/modernize-preflight billing
+
 # 1. Inventory the legacy system (or sweep a portfolio of them)
 /modernize-assess billing
 
@@ -120,6 +127,9 @@ Adjust `legacy/` and `modernized/` to match your actual layout. The key invarian
 
 # 6. Security-harden the legacy system that's still in production
 /modernize-harden billing
+
+# Anytime: where am I, what's stale, what's next
+/modernize-status billing
 ```
 
 ## License
