@@ -9,22 +9,31 @@ equivalence.
 This is a surgical, single-module transformation — one vertical slice of the
 strangler fig. Output goes to `modernized/$1/$2/`.
 
-## Step 0a — Toolchain check (fail fast)
+## Step 0a — Toolchain check (fail fast on target, adapt on legacy)
 
 Verify the build environment **before** planning, not when the tests
 first run:
 
-- **Target stack ($3):** runtime, package manager, and test framework all
-  respond (`java -version` + `mvn -v`, `node -v` + `npm -v`,
-  `python3 -V` + `pytest --version`, …).
-- **Legacy stack (if equivalence tests will execute legacy code):** the
-  compiler/interpreter works on this codebase — run a syntax-only compile
-  of the module being transformed (e.g. `cobc -fsyntax-only`).
-
-If anything is missing or the smoke compile fails, stop and report what
-to install or fix — suggest `/modernize-preflight $1 $3` for the full
-readiness report. Don't enter plan mode on a machine that can't run the
-proof.
+- **Target stack ($3) — required.** Runtime, package manager, and test
+  framework all respond (`java -version` + `mvn -v`, `node -v` + `npm -v`,
+  `python3 -V` + `pytest --version`, …). If any are missing, stop and
+  report what to install — the new code and its tests cannot run without
+  them, so a plan gate now would just defer the failure an hour. Suggest
+  `/modernize-preflight $1 $3` for the full readiness report.
+- **Legacy stack — advisory, never a blocker.** Try a syntax-only compile
+  of the module being transformed (e.g. `cobc -fsyntax-only`). Legacy
+  code often *cannot* build locally by nature, not by misconfiguration —
+  CICS/IMS programs have no local translator, and the real runtime may be
+  a mainframe you don't have. A failed or impossible legacy compile does
+  **not** stop the transform; it changes the equivalence strategy:
+  - dual-execution proof is off the table — characterization tests
+    assert against **recorded traces / golden-master fixtures** (real
+    production outputs, captured reports/screens, SME-confirmed
+    examples) instead of live legacy runs
+  - say so explicitly in the Step 0b plan and later in
+    TRANSFORMATION_NOTES.md ("equivalence is trace-based; legacy was not
+    executable in this environment"), so reviewers know the strength of
+    the proof they're approving
 
 ## Step 0b — Plan (HITL gate)
 

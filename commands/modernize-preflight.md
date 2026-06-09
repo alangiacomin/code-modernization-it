@@ -87,8 +87,11 @@ followed by a **Ready / Ready-with-gaps / Not ready** verdict per command:
 - `assess` + `map` + `extract-rules` — need Checks 1–2 green-ish and
   Check 4's missing-include count low
 - `brief` — needs only the three discovery artifacts; no tooling
-- `transform` + `reimagine` — additionally need Check 3 green for both
-  legacy and target stacks
+- `transform` + `reimagine` — additionally need Check 3 green for the
+  **target** stack. A red legacy toolchain downgrades these to
+  Ready-with-gaps, not Not-ready: equivalence testing falls back to
+  recorded traces / golden-master fixtures instead of dual execution
+  (common and expected for CICS/IMS code that has no local runtime)
 - `harden` — needs Check 2 plus any stack-specific SAST tooling found
 
 Print the table in the session too, and end with the single most
