@@ -91,7 +91,7 @@ result: services scaffolded, total acceptance tests, pending rule IDs, and
 anything in `blockers` or `notScaffolded`.
 
 **Fallback** (no Workflow tool): for each service — cap at 3 to keep the run
-tractable; tell the user which you deferred — spawn a **general-purpose agent
+tractable; tell the user which you deferred — spawn a **scaffolder agent
 in parallel**:
 
 "Scaffold the <service-name> service per analysis/$1/REIMAGINED_ARCHITECTURE.md

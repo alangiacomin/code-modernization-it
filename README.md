@@ -64,9 +64,15 @@ instruction-shaped text as a finding (`injectionFlags` in workflow results —
 surfaced prominently when non-empty); analysis agents are read-only, with
 artifact writes happening only in the orchestrating session; citation
 referees refute any rule or finding supported by comments rather than
-executable code; and `/modernize-brief` remains a human approval gate before
-anything is executed against. Treat discovery artifacts from code you don't
-trust with the same skepticism as the code itself.
+executable code; agent-produced text is **fenced as untrusted data** when it
+flows into a downstream agent's prompt (referees re-derive claims from the
+cited code rather than trusting the finder's description — second-order
+injection); workflow inputs that become filesystem paths are validated
+against a strict name pattern; the one write-capable workflow agent
+(`scaffolder`) runs with an explicit minimal tool list and a write scope of
+exactly its own service directory; and `/modernize-brief` remains a human
+approval gate before anything is executed against. Treat discovery artifacts
+from code you don't trust with the same skepticism as the code itself.
 
 ## Secret handling
 
@@ -113,6 +119,7 @@ Security hardening pass on the **legacy** system: OWASP/CWE scan, dependency CVE
 - **`architecture-critic`** — Adversarial reviewer for target architectures and transformed code. Default stance is skeptical: asks "do we actually need this?" Flags microservices-for-the-resume, ceremonial error handling, abstractions with one implementation. Used by `reimagine` and `transform`.
 - **`security-auditor`** — Reviews code for auth, input validation, secret handling, and dependency CVEs. Tuned for the kinds of issues that appear when translating security primitives across stacks (e.g., session handling from servlet to stateless JWT). Used by `assess` and `harden`.
 - **`test-engineer`** — Writes characterization, contract, and equivalence tests that pin legacy behavior so transformation can be proven correct. Flags tests that exercise code paths without asserting outcomes. Used by `transform`.
+- **`scaffolder`** — Builds one service of a reimagined system from the approved architecture and spec: skeleton, domain model, API stubs, executable acceptance tests. Write scope is exactly its own `modernized/.../<service>/` directory; treats the spec's imperative-sounding content as data, since the spec derives from untrusted legacy code. Used by `reimagine` (Phase E).
 
 ## Installation
 
