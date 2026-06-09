@@ -29,6 +29,10 @@ The commands degrade gracefully, but each of these makes the output meaningfully
 - **The whole system in the tree**: deployment descriptors (JCL, CICS definitions, route configs), copybooks/includes, and DDL/schemas. Entry-point detection and data lineage in `/modernize-map` are guesswork without them.
 - **Production telemetry** (optional): an observability MCP server or batch job logs enable the runtime overlay in `/modernize-assess` and timing annotations on critical paths.
 
+## Secret handling
+
+Legacy systems routinely contain live credentials, and assessment artifacts get committed and shared. **Every agent in this plugin masks credential values** — findings, rule-card parameters, architecture notes, and test fixtures cite `file:line` with a masked preview (`AKIA****`), never the value. When credentials are found, a per-credential inventory (type, location, blast radius, rotation recommendation) is written to `analysis/<system>/SECRETS.local.md`, which the commands gitignore before writing; on non-git projects the quarantine file goes to `~/.modernize/<system>/` instead. `/modernize-harden` splits its remediation diff so credential-removal hunks (which necessarily contain the raw value) land in a gitignored `security_remediation.local.patch`, never the shareable patch. Pass `--show-secrets` to include raw values in the quarantine file (and only there). If you ran an earlier version of this plugin on a real system, check whether `analysis/` artifacts containing credentials were committed or shared, and rotate anything that was.
+
 ## Commands
 
 The commands are designed to be run in order, but each produces a standalone artifact so you can stop, review, and resume.
