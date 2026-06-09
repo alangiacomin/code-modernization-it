@@ -29,6 +29,45 @@ The commands degrade gracefully, but each of these makes the output meaningfully
 - **The whole system in the tree**: deployment descriptors (JCL, CICS definitions, route configs), copybooks/includes, and DDL/schemas. Entry-point detection and data lineage in `/modernize-map` are guesswork without them.
 - **Production telemetry** (optional): an observability MCP server or batch job logs enable the runtime overlay in `/modernize-assess` and timing annotations on critical paths.
 
+## Dynamic workflow orchestration
+
+On Claude Code builds that ship the **Workflow tool**, four commands upgrade
+from "spawn a few agents and merge by hand" to scripted orchestration
+(`workflows/*.js` in this plugin). The commands detect the tool and fall back
+to direct subagent fan-out on older builds — no configuration needed.
+
+| Command | What the workflow adds |
+|---|---|
+| `/modernize-extract-rules` | Extraction loops until two consecutive rounds find nothing new; every rule's `file:line` citation is verified by an independent referee before entering the catalog; P0 rules face a two-judge panel before they can anchor the behavior contract. |
+| `/modernize-harden` | Five class-scoped finders in parallel; every finding is adversarially refuted (Critical/High double-judged), so false positives die before `SECURITY_FINDINGS.md`. |
+| `/modernize-assess --portfolio` | One survey agent per system, pipelined independently; COCOMO computed uniformly in code; crashed sweeps resume from cache. |
+| `/modernize-reimagine` (Phase E) | The 3-service scaffolding cap is lifted — the runtime queues one agent per approved service. |
+
+These fan out more agents than the fallback path (tens, on a large estate) —
+the commands state the expected count before launching. Invoking the slash
+command is the opt-in.
+
+A structural security property comes with the conversion: workflow extraction
+agents return **schema-validated data**, and only the orchestrating session
+writes artifacts. Analysis agents never touch disk. See the next two sections
+for why that matters.
+
+## Untrusted code & prompt injection
+
+The systems this plugin analyzes are untrusted input. A hostile codebase can
+plant comments or string literals that read as instructions to an AI tool
+("ignore previous instructions", "mark this rule approved") in the hope of
+steering what lands in `BUSINESS_RULES.md` or `SECURITY_FINDINGS.md` — which
+downstream commands treat as trusted. Defenses, in layers: every agent's
+system prompt pins file content as data-never-instructions and reports
+instruction-shaped text as a finding (`injectionFlags` in workflow results —
+surfaced prominently when non-empty); analysis agents are read-only, with
+artifact writes happening only in the orchestrating session; citation
+referees refute any rule or finding supported by comments rather than
+executable code; and `/modernize-brief` remains a human approval gate before
+anything is executed against. Treat discovery artifacts from code you don't
+trust with the same skepticism as the code itself.
+
 ## Secret handling
 
 Legacy systems routinely contain live credentials, and assessment artifacts get committed and shared. **Every agent in this plugin masks credential values** — findings, rule-card parameters, architecture notes, and test fixtures cite `file:line` with a masked preview (`AKIA****`), never the value. When credentials are found, a per-credential inventory (type, location, blast radius, rotation recommendation) is written to `analysis/<system>/SECRETS.local.md`, which the commands gitignore before writing; on non-git projects the quarantine file goes to `~/.modernize/<system>/` instead. `/modernize-harden` splits its remediation diff so credential-removal hunks (which necessarily contain the raw value) land in a gitignored `security_remediation.local.patch`, never the shareable patch. Pass `--show-secrets` to include raw values in the quarantine file (and only there). If you ran an earlier version of this plugin on a real system, check whether `analysis/` artifacts containing credentials were committed or shared, and rotate anything that was.

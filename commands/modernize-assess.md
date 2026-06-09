@@ -16,6 +16,34 @@ dir is the first non-flag token.
 Sweep every immediate subdirectory of the parent dir and produce a
 heat-map a steering committee can use to sequence a multi-year program.
 
+**Preferred — Workflow orchestration.** If the **Workflow tool** is available
+in this session (this command invocation is your authorization), enumerate
+the immediate subdirectories first — the workflow script has no filesystem
+access — then launch one survey agent per system, all independent:
+
+```bash
+ls -d <parent-dir>/*/
+```
+
+```
+Workflow({
+  scriptPath: "${CLAUDE_PLUGIN_ROOT}/workflows/portfolio-assess.js",
+  args: { parentDir: "<parent-dir>", systems: ["<sub1>", "<sub2>", ...] }
+})
+```
+
+This is one agent per system (a 30-system estate = 30 agents — tell the user
+the count before launching; the runtime queues them against its concurrency
+cap). Each agent returns a structured metrics row and the workflow computes
+COCOMO-II uniformly in code, so every row uses the identical formula. On
+return, render `rows` (plus an "unmeasured" marker row for anything in
+`unmeasured`) into the Step P4 heat-map, add the sequencing recommendation
+yourself, and skip Steps P1–P3. For very long sweeps, note the workflow's
+`runId` — if the session dies mid-sweep, relaunch with `resumeFromRunId` and
+completed systems return instantly from cache.
+
+**Fallback** (no Workflow tool): run Steps P1–P3 per system yourself, then P4.
+
 ## Step P1 — Per-system metrics
 
 For each subdirectory `<sys>`:
