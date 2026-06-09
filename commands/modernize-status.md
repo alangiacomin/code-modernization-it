@@ -19,6 +19,7 @@ workflow stage, with the artifact's presence and modification time:
 | extract-rules | `BUSINESS_RULES.md`, `DATA_OBJECTS.md` |
 | brief | `MODERNIZATION_BRIEF.md` (note whether the approval block is signed) |
 | harden | `SECURITY_FINDINGS.md`, `security_remediation.patch` |
+| uplift | `DELTA_CATALOG.md`; `modernized/$1/UPLIFT_NOTES.md` (note per-project: builds on target? baseline reproduced?) |
 | transform / reimagine | each `modernized/$1*/<module>/` dir — note test presence and whether `TRANSFORMATION_NOTES.md` exists |
 
 ## 2 — Staleness

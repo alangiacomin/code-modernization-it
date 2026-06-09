@@ -35,8 +35,13 @@ store, and integration. Below it, a table mapping legacy component → target
 component(s).
 
 ### 3. Phased Sequence
-Break the work into 3-6 phases using **strangler-fig ordering** — lowest-risk,
-fewest-dependencies first. For each phase:
+Break the work into 3-6 phases. Order by **strangler-fig** for a cross-stack
+rewrite (lowest-risk, fewest-dependencies first), or **build-graph leaf-first**
+for a same-stack uplift (libraries before the apps that depend on them). Name
+the per-phase execution command: `/modernize-transform` (cross-stack module
+rewrite), `/modernize-reimagine` (greenfield rebuild), or `/modernize-uplift`
+(same-stack version bump — when the target is a newer version of the *same*
+stack, this is the path, not transform). For each phase:
 - Scope (which legacy modules, which target services)
 - Entry criteria (what must be true to start)
 - Exit criteria (what tests/metrics prove it's done)

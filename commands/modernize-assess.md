@@ -221,7 +221,7 @@ Create `analysis/$1/ASSESSMENT.md` with these sections:
 - **Security Findings** (CWE table)
 - **Documentation Gaps** (top 5)
 - **Relative Scale** (the COCOMO-II index + KSLOC as a complexity/scale signal for ranking this system against others. **Not a timeline:** state plainly that this is a relative size measure, not an estimate of how long modernization will take or what it will cost — it assumes traditional human-team productivity, which agentic transformation does not follow. Do not print person-months, a schedule, a cost, or a date.)
-- **Recommended Modernization Pattern** (one of: Rehost / Replatform / Refactor / Rearchitect / Rebuild / Replace — with one-paragraph rationale)
+- **Recommended Modernization Pattern** (one of: Rehost / Replatform / Refactor / Rearchitect / Rebuild / Replace — with one-paragraph rationale, and the command it routes to: **Replatform / Refactor-in-place same-stack version bump → `/modernize-uplift`**; Rearchitect/cross-stack → `/modernize-transform`; Rebuild → `/modernize-reimagine`)
 
 Also create `analysis/$1/ARCHITECTURE.mmd` containing the Mermaid domain
 dependency diagram from the legacy-analyst.

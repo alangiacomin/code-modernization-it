@@ -7,10 +7,12 @@ A structured workflow and set of specialist agents for modernizing legacy codeba
 Legacy modernization fails most often not because the target technology is wrong, but because teams skip steps: they transform code before understanding it, reimagine architecture before extracting business rules, or ship without a harness that would catch behavior drift. This plugin enforces a sequence:
 
 ```
-preflight → assess → map → extract-rules → brief → reimagine | transform → harden
+preflight → assess → map → extract-rules → brief → reimagine | transform | uplift → harden
 ```
 
-The discovery commands (`assess`, `map`, `extract-rules`) build artifacts under `analysis/<system>/`. The `brief` command synthesizes them into an approval gate. The build commands (`reimagine`, `transform`) write new code under `modernized/`. The `harden` command audits the legacy system and produces a reviewable remediation patch. Each step has a dedicated slash command, and specialist agents (legacy analyst, business rules extractor, architecture critic, security auditor, test engineer) are invoked from within those commands — or directly — to keep the work honest.
+The three build paths are different *methods*, chosen by the brief's recommended pattern: **`transform`** (cross-stack rewrite from extracted intent), **`reimagine`** (greenfield rebuild), and **`uplift`** (same-stack version bump — e.g. .NET Framework → .NET 8 — that preserves the code and fixes only the version deltas).
+
+The discovery commands (`assess`, `map`, `extract-rules`) build artifacts under `analysis/<system>/`. The `brief` command synthesizes them into an approval gate. The build commands (`reimagine`, `transform`, `uplift`) write new code under `modernized/`. The `harden` command audits the legacy system and produces a reviewable remediation patch. Each step has a dedicated slash command, and specialist agents (legacy analyst, business rules extractor, architecture critic, security auditor, test engineer) are invoked from within those commands — or directly — to keep the work honest.
 
 ## Expected layout
 
@@ -42,6 +44,7 @@ to direct subagent fan-out on older builds — no configuration needed.
 | `/modernize-harden` | Five class-scoped finders in parallel; every finding is adversarially refuted (Critical/High double-judged), so false positives die before `SECURITY_FINDINGS.md`. |
 | `/modernize-assess --portfolio` | One survey agent per system, pipelined independently; the COCOMO complexity index computed uniformly in code; crashed sweeps resume from cache. |
 | `/modernize-reimagine` (Phase E) | The 3-service scaffolding cap is lifted — the runtime queues one agent per approved service. |
+| `/modernize-uplift` (delta catalog) | One finder per delta category (API-removed / behavioral-silent / project-system / dependency), each verified against the cited code so deltas that don't actually apply to this codebase are dropped. |
 
 These fan out more agents than the fallback path (tens, on a large estate) —
 the commands state the expected count before launching. Invoking the slash
@@ -108,6 +111,9 @@ Greenfield rebuild from extracted intent rather than a structural port. Mines a 
 ### `/modernize-transform <system-dir> <module> <target-stack>`
 Surgical, single-module strangler-fig rewrite. Plans first (HITL gate), then writes characterization tests via `test-engineer`, then an idiomatic target implementation under `modernized/<system>/<module>/`, proves equivalence by running the tests, and produces `TRANSFORMATION_NOTES.md` mapping legacy → modern with deliberate deviations called out. Reviewed by `architecture-critic`.
 
+### `/modernize-uplift <system-dir> <source-version> <target-version> [project-pattern]`
+**Same-stack** version uplift (e.g. `.NET Framework 4.8` → `.NET 8`, Spring Boot 2 → 3, Python 2 → 3) — the common case `transform` gets wrong by rewriting. Preserves the code and makes the **smallest diffs that compile and behave identically on the target**, driven by a **delta catalog** (the known $source→$target breaking changes that *this* code actually hits) rather than extracted business rules. Detects and drives the ecosystem's migration tooling (.NET `upgrade-assistant`, Java **OpenRewrite**, `pyupgrade`, `ng update`) and owns the residue. Equivalence is proven by a **dual-target test harness**: one suite runs on both the old and new runtime, baseline-on-old is the oracle, new must reproduce it. Produces `analysis/<system>/DELTA_CATALOG.md` and `modernized/<system>/UPLIFT_NOTES.md`. Spawns `version-delta-analyst` and `test-engineer`; `architecture-critic` reviews for *gratuitous divergence* (here, any change beyond the minimal uplift is a finding). If the catalog shows the target forces most of the code to change, it tells you to use `transform` instead.
+
 ### `/modernize-status <system-dir>`
 Read-only progress report: artifact inventory with timestamps per workflow stage, staleness flags (e.g. a brief older than the assessment it was built from), secrets-hygiene checks (quarantine file gitignored and never committed), and the single most useful next command. Run it anytime you come back to a modernization after a break.
 
@@ -120,7 +126,8 @@ Security hardening pass on the **legacy** system: OWASP/CWE scan, dependency CVE
 - **`business-rules-extractor`** — Extracts business rules from procedural code with source citations. Each rule includes: what, where it's implemented, which conditions fire it, and any corner cases hidden in data. Used by `extract-rules` and `reimagine`.
 - **`architecture-critic`** — Adversarial reviewer for target architectures and transformed code. Default stance is skeptical: asks "do we actually need this?" Flags microservices-for-the-resume, ceremonial error handling, abstractions with one implementation. Used by `reimagine` and `transform`.
 - **`security-auditor`** — Reviews code for auth, input validation, secret handling, and dependency CVEs. Tuned for the kinds of issues that appear when translating security primitives across stacks (e.g., session handling from servlet to stateless JWT). Used by `assess` and `harden`.
-- **`test-engineer`** — Writes characterization, contract, and equivalence tests that pin legacy behavior so transformation can be proven correct. Flags tests that exercise code paths without asserting outcomes. Used by `transform`.
+- **`test-engineer`** — Writes characterization, contract, and equivalence tests that pin legacy behavior so transformation can be proven correct. Flags tests that exercise code paths without asserting outcomes. Used by `transform` and `uplift`.
+- **`version-delta-analyst`** — For **same-stack uplifts**: finds the breaking/behavioral changes between two versions of one stack that actually bite a given codebase, and drives the ecosystem migration tool. Produces a delta catalog (API-removed / silent-behavioral / project-system / dependency), preserving the code rather than redesigning it. Used by `uplift`.
 - **`scaffolder`** — Builds one service of a reimagined system from the approved architecture and spec: skeleton, domain model, API stubs, executable acceptance tests. Write scope is exactly its own `modernized/.../<service>/` directory; treats the spec's imperative-sounding content as data, since the spec derives from untrusted legacy code. Used by `reimagine` (Phase E).
 
 ## Installation
@@ -179,6 +186,9 @@ Adjust `legacy/` and `modernized/` to match your actual layout. The key invarian
 
 # 5b. …or transform module by module (strangler fig)
 /modernize-transform billing interest-calc java-spring
+
+# 5c. …or, for a same-stack version bump, uplift in place (preserve the code)
+/modernize-uplift billing ".NET Framework 4.8" ".NET 8"
 
 # 6. Security-harden the legacy system that's still in production
 /modernize-harden billing
