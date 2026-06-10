@@ -74,9 +74,9 @@ Run `/modernize-preflight $1 $3` for the full readiness report.
 place* — it bumps target frameworks and fixes APIs while keeping the `.sln`,
 the relative `<ProjectReference>`/module paths, and a reviewable `git diff`.
 That is fundamentally different from `transform`/`reimagine`, which write a
-new tree. So: **copy the whole system once** — `cp -r legacy/$1 modernized/$1`
+new tree. So: **copy the whole system once** — `cp -r legacy/$1 modernized/$1-uplifted`
 (the entire solution, not project-by-project) — and do all editing in place
-under `modernized/$1/`, git-tracked. `legacy/$1` stays the untouched baseline
+under `modernized/$1-uplifted/`, git-tracked. `legacy/$1` stays the untouched baseline
 oracle. Copying the *whole* solution (not incrementally) is what keeps
 relative project references intact and makes the final artifact a real
 `git diff` between the seeded copy and the end state — which is exactly what a
@@ -185,11 +185,11 @@ gap-fill tests to expected/recorded outputs and label the proof target-only.
 
 ## Step 5 — Migrate, leaf-first, minimal-diff
 
-All editing happens **in place inside the working copy `modernized/$1/`** from
+All editing happens **in place inside the working copy `modernized/$1-uplifted/`** from
 Step 1 (so relative project references resolve and the result is a clean
 `git diff` against the seeded copy). `legacy/$1` is never touched. Apply-mode
 tools (`upgrade-assistant`, `ng update`) mutate the tree in place — that is
-fine *here* because they run against the `modernized/$1/` copy, not `legacy/`.
+fine *here* because they run against the `modernized/$1-uplifted/` copy, not `legacy/`.
 
 For each project in dependency order (respecting the Step 1 overrides):
 1. **Run the ecosystem codemod** for the Mechanical deltas (`upgrade-assistant`
@@ -216,7 +216,7 @@ Run the **same suite** on both targets (or target-only per Step 0.3):
 
 ## Step 7 — UPLIFT_NOTES
 
-Write `modernized/$1/UPLIFT_NOTES.md`:
+Write `modernized/$1-uplifted/UPLIFT_NOTES.md`:
 - Delta → fix mapping (which catalog delta each diff addresses; which tool vs
   hand-applied)
 - Dual-run diff table (or "target-only — source runtime unavailable here")
