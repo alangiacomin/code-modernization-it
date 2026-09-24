@@ -107,13 +107,22 @@ ask whether to run it first or proceed now. If proceeding:
 
 ### 2. Estimate, ask if the run is large, then launch
 
-Before launching, tell the user the shard count and what it implies: roughly
-**one extractor agent per shard, then one citation referee per candidate
-rule** (usually the dominant term — a few per shard), two judges per P0 rule,
-and one data-object cataloger, queued against the runtime's concurrency cap.
-A 60-shard estate that yields 300 candidate rules with 40 P0s is on the order
-of 450 agents; a tiny system in lens mode is 15–40. Observed on a 44-program,
-30,000-line system: 466 to 647 agents, about 8.8M tokens, 50 to 80 minutes.
+**Estimate** the run before launching: 10 to 15 agents per shard, about 16k
+tokens per agent, about 8 agents finishing per minute. For calibration, 4
+shards (five programs, about 1,600 lines) used 58 agents in under 10
+minutes; a 44-program, 30,000-line estate used 466 to 647 agents, about 8.8M
+tokens and 50 to 80 minutes; a tiny system in lens mode is 15 to 40 agents.
+
+**With more than 12 shards, ask before launching, with the AskUserQuestion
+tool** (a reply that only mentions the estimate is easy to miss and is not a
+gate). Put the shard count, the line count and the estimate (agents, tokens,
+minutes) in the question, and offer "Run all N shards", "Only a slice (say
+which, as a module pattern)" and "Cancel". Launch only after the answer: on
+"Run all N shards", launch; on a slice, rebuild the shard list with that
+pattern (step 1; module mode ignores `modulePattern`) and launch that; on
+"Cancel", stop. With 12 shards or fewer, launch straight away, and say in
+your reply how many shards you launched and the rough estimate.
+
 One workflow run is capped at 1000 agents by the runtime; the script stops
 scheduling shards before it gets there (they come back in
 `stats.skippedModules`), so for a list beyond about 70 shards (10 to 15 agents
