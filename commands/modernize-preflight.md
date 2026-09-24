@@ -264,7 +264,7 @@ by a **Ready / Ready-with-gaps / Not ready** verdict per command:
   (common and expected for CICS/IMS code that has no local runtime)
 - `harden` — needs Check 2 plus any stack-specific SAST tooling found
 - `uplift` (same-stack version bump) — needs Check 3 green for the **target**
-  version. Two uplift-specific signals to report when a `[target-stack]` that
+  version. Three uplift-specific signals to report when a `[target-stack]` that
   looks like a version bump was passed: (a) is the **source** runtime also
   available here? Both present = a true dual-run is possible; target-only =
   equivalence degrades to characterization tests against recorded outputs (say

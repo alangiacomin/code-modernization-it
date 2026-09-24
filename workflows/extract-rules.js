@@ -686,7 +686,7 @@ const rerunModules = modules
 
 // ---- Return ---------------------------------------------------------------------
 // The calling session renders BUSINESS_RULES.md / DATA_OBJECTS.md from this —
-// agents never write the artifacts (see "Untrusted code" in the plugin README).
+// agents never write the artifacts (see "Safety notes" in the plugin README).
 return {
   system,
   mode: MODE,

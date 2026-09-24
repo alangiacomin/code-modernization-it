@@ -8,7 +8,7 @@ It works by enforcing a sequence, because modernization usually fails when teams
 preflight → assess → map → extract-rules → brief → (reimagine | transform | uplift) → harden
 ```
 
-The discovery commands (`assess`, `map`, `extract-rules`) write artifacts to `analysis/<system>/`. `brief` synthesizes them into an approval gate. The three build commands write to `modernized/<system>/` and are three different *methods* — the brief recommends which one fits:
+The discovery commands (`assess`, `map`, `extract-rules`) write artifacts to `analysis/<system>/`. `brief` synthesizes them into an approval gate. The three build commands write under `modernized/` (`transform` to `<system>/<module>/`, `reimagine` to `<system>-reimagined/`, `uplift` to `<system>-uplifted/`) and are three different *methods* — the brief recommends which one fits:
 
 - **`transform`** — cross-stack rewrite from extracted intent (e.g. COBOL → Java).
 - **`reimagine`** — greenfield rebuild on a new architecture.
@@ -24,7 +24,7 @@ The discovery commands (`assess`, `map`, `extract-rules`) write artifacts to `an
 
 ## Quickstart
 
-Each command takes a `<system-dir>` and assumes the code lives at `legacy/<system-dir>/`. Artifacts land in `analysis/<system-dir>/`; new code in `modernized/<system-dir>/`. If your code is elsewhere, symlink it: `mkdir -p legacy && ln -s /path/to/code legacy/billing`.
+Each command takes a `<system-dir>` and assumes the code lives at `legacy/<system-dir>/`. Artifacts land in `analysis/<system-dir>/`; new code under `modernized/`. If your code is elsewhere, symlink it: `mkdir -p legacy && ln -s /path/to/code legacy/billing`.
 
 Plugin commands are namespaced, so type the full name — `/code-modernization:modernize-…` (autocomplete finds it from `/modernize`). Flags go after the positional arguments (`/code-modernization:modernize-harden billing --show-secrets`): the first argument is the system directory, except for `assess --portfolio`, whose mode flag comes first.
 
@@ -48,7 +48,7 @@ Then the full path:
 
 ## Commands
 
-Run in order, but each is standalone — stop, review, resume.
+Run in order; you can stop and review after any step. Each command stands alone except `brief`, which needs `assess`, `map` and `extract-rules` first. If a command stops or fails, `/code-modernization:modernize-status <system-dir>` names the next step; an interrupted `extract-rules` run [can resume](#dynamic-workflow-orchestration).
 
 - **`/code-modernization:modernize-preflight <system-dir> [target-stack]`** — Environment readiness check. Asks you, in a pop-up, the five questions the source can't answer (scope, whether you can build and test locally, bespoke build infrastructure, prior attempts, what's off limits) and records your answers verbatim. Then it detects the legacy stack, checks analysis tooling, reads the CI/build definition, smoke-tests the toolchain against the real code (and, if you name a target stack, that a throwaway project builds on it here), inventories missing includes / deployment descriptors, and checks the **scope boundary** — whether `<system-dir>` is a slice of a larger repo and what outside it depends on it. Produces `PREFLIGHT.md` with a per-command Ready / Ready-with-gaps / Not-ready verdict.
 

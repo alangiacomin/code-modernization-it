@@ -20,7 +20,8 @@ heat-map a steering committee can use to sequence a multi-year program.
 **Preferred — Workflow orchestration.** If the **Workflow tool** is available
 in this session (this command invocation is your authorization), enumerate
 the immediate subdirectories first — the workflow script has no filesystem
-access — then launch one survey agent per system, all independent:
+access — tell the user the count (a 30-system estate = 30 agents), then
+launch one survey agent per system, all independent:
 
 ```bash
 ls -d <parent-dir>/*/ | xargs -n1 basename   # bare subdir names, not paths
@@ -33,10 +34,9 @@ Workflow({
 })
 ```
 
-This is one agent per system (a 30-system estate = 30 agents — tell the user
-the count before launching; the runtime queues them against its concurrency
-cap). Each agent returns a structured metrics row and the workflow computes
-COCOMO-II uniformly in code, so every row uses the identical formula. On
+The runtime queues the agents against its concurrency cap. Each agent returns
+a structured metrics row and the workflow computes COCOMO-II uniformly in
+code, so every row uses the identical formula. On
 return, render `rows` (plus an "unmeasured" marker row for anything in
 `unmeasured`) into the Step P4 heat-map, add the sequencing recommendation
 yourself, and skip Steps P1–P3. For very long sweeps, note the workflow's
