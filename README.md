@@ -54,7 +54,7 @@ Run in order, but each is standalone — stop, review, resume.
 
 - **`/code-modernization:modernize-assess <system-dir>`** *(or `--portfolio <parent-dir>`)* — Inventory: languages, complexity, tech debt, security posture, and a COCOMO complexity index ([see note](#a-note-on-cocomo)). Produces `ASSESSMENT.md` + `ARCHITECTURE.mmd`. With `--portfolio`, sweeps every subdirectory and writes a sequencing heat-map (`portfolio.html`).
 
-- **`/code-modernization:modernize-map <system-dir>`** — Dependency and topology map: call graph, data lineage, entry points, and 2–4 business flows each traced for a persona (the claimant, the auditor). Produces `topology.json` and an **interactive zoomable `TOPOLOGY.html`** (circle-pack sized by LOC, edge toggles, search, and a persona-flow walkthrough), plus small `.mmd` diagrams for docs.
+- **`/code-modernization:modernize-map <system-dir> [--no-describe]`** — Dependency and topology map: call graph, data lineage, entry points, and 2–4 business flows each traced for a persona (the claimant, the auditor). Produces `topology.json` and an **interactive zoomable `TOPOLOGY.html`** (circle-pack sized by LOC, edge toggles, search, and a persona-flow walkthrough), plus small `.mmd` diagrams for docs. Each node also gets a short plain-language description in the sidebar, written by one agent per node from just that node's source and links; `--no-describe` skips that step.
 
 - **`/code-modernization:modernize-extract-rules <system-dir> [module-pattern]`** — Mine the business rules — calculations, validations, eligibility, state transitions — into Given/When/Then "Rule Cards" with `file:line` citations and confidence ratings. With the Workflow tool, anything but a tiny system is extracted in per-module shards (from `map`'s `topology.json` if present, else the directory tree), so each extractor reads one focused slice. Produces `BUSINESS_RULES.md` + `DATA_OBJECTS.md`.
 
@@ -74,7 +74,7 @@ Run in order, but each is standalone — stop, review, resume.
 
 Specialist subagents invoked by the commands (or directly):
 
-- **`legacy-analyst`** — Reads legacy code (COBOL, EJB, classic ASP, …) and produces structural summaries; spots implicit dependencies and "JOBOL" (procedural code in modern syntax). *(assess, reimagine, uplift)*
+- **`legacy-analyst`** — Reads legacy code (COBOL, EJB, classic ASP, …) and produces structural summaries; spots implicit dependencies and "JOBOL" (procedural code in modern syntax). *(assess, map, extract-rules, reimagine)*
 - **`business-rules-extractor`** — Mines domain rules from procedural code with source citations. *(extract-rules, reimagine)*
 - **`architecture-critic`** — Skeptical reviewer of target designs and transformed code; flags over-engineering. *(reimagine, transform, uplift)*
 - **`security-auditor`** — Auth, input validation, secrets, dependency CVEs. *(assess, harden)*
