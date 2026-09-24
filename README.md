@@ -120,6 +120,31 @@ Commands degrade gracefully, but these improve the output (run `/code-modernizat
 
 `assess` derives a COCOMO figure from code size and uses it **only as a relative complexity/scale index** to rank and sequence systems — never as a timeline or cost. COCOMO's constants encode human-team productivity, which agentic transformation doesn't follow, so any duration derived from it would be wrong.
 
+## Teams, adapting it, and what it has been tried on
+
+**Who owns what.** `legacy/` stays read-only: by convention, backed by the permission rule in [Recommended workspace setup](#recommended-workspace-setup). `analysis/<system>/` holds outputs a named person should review, not facts; `modernized/` is code and gets ordinary code review. The commands never commit, so commit both yourself; `assess` and `harden` keep the credential inventory and the credential patch out of git through `analysis/.gitignore`. Suggested reviewers, from what each artifact contains (the commands stop for a human at several gates but never check who that is):
+
+| Artifact | Contains | Suggested reviewer |
+| --- | --- | --- |
+| `PREFLIGHT.md` | the five answers only a person can give, the scope-boundary finding, tool and build checks | whoever owns the build |
+| `ASSESSMENT.md` | inventory, technical debt, security posture, relative scale, recommended pattern | the engineering lead or sponsor |
+| `topology.json`, `TOPOLOGY.html` | call graph, data lineage, persona flows | engineers who know the system |
+| `BUSINESS_RULES.md` | Rule Cards with citations, priority and confidence, and a closing list of questions for experts | a business expert per domain; start with the P0 rules and that list |
+| `MODERNIZATION_BRIEF.md` | phases, entry and exit criteria, behavior contract, approval block | the approver, who steers execution by editing it |
+| `SECURITY_FINDINGS.md`, the patch | ranked findings, a reviewed remediation patch | a security engineer, who applies the patch |
+
+State lives in files, not in chat: later commands read the brief's criteria and the answers in `PREFLIGHT.md`, not your conversation, so a second person or a fresh session can run `/code-modernization:modernize-status <system-dir>` and continue from the next command it names.
+
+**Trying it on a live repository.** `preflight` and `assess` write their reports under `analysis/` and change no source file. Two side effects: preflight's smoke test compiles one file and, where the system has a build system, restores and builds one small project or module with it; that writes build output (and, for some tools, updates lockfiles) wherever the build normally does, possibly inside `legacy/`, and outside a git repository `assess` writes any credential inventory to `~/.modernize/<system>/`.
+
+**Adapting it.** Commands, agents and workflows are plain markdown and JavaScript under Apache 2.0. Fork it to change the prompts, the gates or the steps for your stack.
+
+**Repeatability.** A model does the extraction, so two runs of `extract-rules` on the same estate, or on different models, can find different rules and number them differently. Treat `BUSINESS_RULES.md` as reviewed output, not a deterministic build artifact. Headings are always `### RULE-NNN: <name>`, so later steps can find rules whichever run wrote them. The verification steps and the closing question list help a person review what was found; they do not make two runs identical.
+
+**Permissions and toolchain.** The commands write files, so a session that asks before every edit keeps stopping: use accept-edits mode or the allow rules in Recommended workspace setup. Shell commands still ask, even in accept-edits mode: `git check-ignore`, `python3` scripts, analysis tools such as `scc`, `cp -r`, and the build and test commands of your stacks, and so does anything outside the project, such as `~/.modernize/`. Writes to sensitive paths such as `.git/`, `.mvn/` and `.npmrc` ask even with an allow rule. `transform`, `reimagine` and `uplift` also need a toolchain that builds and tests the target stack; `preflight` checks it when you name one.
+
+**What it has been tried on.** The one example in this README, the map at the top, is AWS CardDemo, a public COBOL, CICS and JCL sample. Any other stack goes through the same generic path (`preflight` detects it from file extensions and manifests), but nothing in this plugin shows one being run, so expect to adapt.
+
 ## Dynamic workflow orchestration
 
 On Claude Code builds with the Workflow tool, five commands (`extract-rules`, `harden`, `assess --portfolio`, `reimagine`, `uplift`) run as scripted multi-agent orchestrations that fan out more agents for deeper coverage — looping until findings stabilize, and adversarially verifying each finding before it's written. `uplift`'s migration fan-out runs in dependency-aware escalating batches behind a per-batch **circuit breaker**, so a playbook that stops working is caught within a handful of agents and the spend stops until it is revised. A stopped or failed `extract-rules` (or `assess --portfolio`) run is **resumable** in the same session: the command re-runs the workflow with the run's ID, and every agent that finished before the stop replays from the run's journal instead of running again. Shards whose agents failed outright are reported and re-run on their own in a follow-up run. They fall back to direct subagent fan-out on older builds automatically; no configuration needed. Invoking the slash command is the opt-in.
