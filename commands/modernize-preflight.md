@@ -31,7 +31,7 @@ tool's Other). Do not print the questions in your reply, and do not answer
 them yourself.
 
 **While you wait, run only checks that do not need the answers.** None of
-Checks 1–6 does (Check 6 verifies the scope boundary from the source
+Checks 1–7 does (Check 6 verifies the scope boundary from the source
 *independently* — the human's answer says whether a crossing *matters*, not
 whether it exists), so run them while the pop-up is open.
 
@@ -194,6 +194,55 @@ boundary crossing:
 
 If `$system` really is a standalone repository, one line saying so is the whole
 check — it is cheap when it does not apply.
+
+## Check 7 — Is `legacy/` protected from edits?
+
+Every command here is written never to edit `legacy/`, but that is only a
+convention until something enforces it. Look for a permission rule that does.
+This check is **read-only**: never edit a settings file, and never suggest
+loosening a permission.
+
+Read whichever of these exist:
+
+- the project's `.claude/settings.json` and `.claude/settings.local.json`
+- the user settings: `~/.claude/settings.json`, or the `settings.json` in the
+  directory named by `CLAUDE_CONFIG_DIR` when that environment variable is set
+
+In each `permissions.deny` list, look for an `Edit` rule that covers
+everything under `legacy/`: `Edit(legacy/**)`, `Edit(./legacy/**)`,
+`Edit(**/legacy/**)`, an absolute `Edit(//…/legacy/**)`, `Edit(/legacy/**)`
+(project files only — in user settings a leading `/` anchors at `~/.claude`),
+or a broader `Edit` deny. A `Write(...)` rule does not count: file writes are
+matched through the `Edit` rule. Report only which file holds the rule and the
+rule itself — user settings can hold credentials, so quote nothing else from
+them.
+
+The status is ✅ or ⚠️, never ❌, and this check changes no command's verdict:
+
+- **✅** — a matching deny rule exists. Name the file and the rule. If it is
+  broader than `legacy/` (a bare `Edit`), say that it also blocks
+  `analysis/` and `modernized/`, where the commands write.
+- **⚠️** — none found, or none of the files exist or parse. Print this
+  snippet to add to the project's `.claude/settings.json` (merge the entry
+  into `permissions.deny` if that list is already there):
+
+  ```json
+  {
+    "permissions": {
+      "deny": ["Edit(/legacy/**)"]
+    }
+  }
+  ```
+
+  Managed (organization) settings are not read here, so say that a rule set
+  there would not show up in this check.
+
+Say this plainly on either status, so a green row is not read as a guarantee:
+a permission rule covers Claude's file tools and the shell commands Claude
+Code recognizes (`sed`, `tee`, redirections such as `> file`), but not a
+script or program that opens the files itself. The hard guarantee is
+enforced by the operating system instead — a read-only mount of `legacy/`,
+or a sandbox that does not let shell commands write there.
 
 ## Report
 

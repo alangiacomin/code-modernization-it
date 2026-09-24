@@ -85,7 +85,7 @@ Specialist subagents invoked by the commands (or directly):
 
 ## Recommended workspace setup
 
-A `.claude/settings.json` in the project you're modernizing enforces the core invariant — never touch `legacy/`, freely edit `analysis/` and `modernized/`:
+The commands never edit `legacy/`, by convention. A `.claude/settings.json` in the project you're modernizing backs that up with a deny rule for `legacy/` and allow rules for `analysis/` and `modernized/`; `/code-modernization:modernize-preflight` checks for the deny rule:
 
 ```json
 {
