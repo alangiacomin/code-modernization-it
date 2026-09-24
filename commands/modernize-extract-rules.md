@@ -187,8 +187,11 @@ Cards, de-duplicating by `source` + name).
 ### 4. Render
 
 When it returns, **you** write the artifacts from the structured result —
-the extraction agents are read-only by design (see "Untrusted code" in the
-plugin README); nothing they produced touches disk until this step:
+the extraction agents are read-only by design (see "Safety notes" in the
+plugin README); nothing they produced touches disk until this step. Save the
+result as `analysis/$system/rules_result.json` and write one script,
+`analysis/$system/render_rules.py` (never `/tmp`), that reads it, so the
+documents can be regenerated:
 
 1. Render every entry in `confirmedRules` as a Rule Card (exact format below)
    into `analysis/$system/BUSINESS_RULES.md`, grouped by category, with the
@@ -261,6 +264,10 @@ For each distinct rule, write a **Rule Card** in this exact format (in **Source*
 **Suspected defect:** <optional — legacy behavior that looks wrong; decide preserve-vs-fix during transform>
 **Confidence:** High | Medium | Low — <why; if < High, state the exact SME question>
 ```
+
+The heading is exactly `### RULE-NNN: <name>`, numbered sequentially
+(`RULE-001`, `RULE-002`, …) — never domain-coded ids such as `BR-D7`: later
+commands and tools find rules by that pattern.
 
 Priority heuristic — default to **P1**. Assign **P0** if the rule moves money,
 enforces a regulatory/compliance requirement, or guards data integrity (and
