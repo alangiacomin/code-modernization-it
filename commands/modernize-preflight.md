@@ -17,22 +17,23 @@ readiness report, not the first error.
 
 ## Check 0 — Ask the human (these answers are not in the source)
 
-Before any automated check, ask the person running this command the five
-questions below. The most expensive modernization mistakes are things a
-person who knows the system answers in seconds and that cost real money to
-discover wrong from the source alone. Ask **only** these — add none —
-and accept "don't know" for any of them.
+Ask the person running this command the five questions below. The most
+expensive modernization mistakes are things a person who knows the system
+answers in seconds and that cost real money to discover wrong from the
+source alone. Ask **only** these — add none — and accept "don't know" for
+any of them.
 
-**Ask, then do not block on the answers.** None of Checks 1–6 needs one
-(Check 6 verifies the scope boundary from the source *independently* — the
-human's answer says whether a crossing *matters*, not whether it exists), so
-proceed to the checks immediately after asking and write the report with
-whatever answers exist by then. Any question still unanswered goes in the
-report **verbatim, marked as an open item the human must fill in** — it is
-not dropped. This way an interactive user answers while the checks run, a
-headless or scripted run still produces a complete `PREFLIGHT.md`, and the
-one thing that never happens is a readiness report silently missing the
-questions.
+**Ask with the AskUserQuestion tool (a pop-up) — never in chat text.** It
+takes at most four questions per call, so ask questions 1–4 in one call and
+question 5 in a second. Give each question its own options, one of them
+"Don't know", and let the person type a free-text answer instead (the
+tool's Other). Do not print the questions in your reply, and do not answer
+them yourself.
+
+**While you wait, run only checks that do not need the answers.** None of
+Checks 1–6 does (Check 6 verifies the scope boundary from the source
+*independently* — the human's answer says whether a crossing *matters*, not
+whether it exists), so run them while the pop-up is open.
 
 1. **Scope** — Is `legacy/$system` the complete system, or one slice of a
    larger codebase? If a slice: what *outside* it depends on code *inside*
@@ -54,9 +55,12 @@ questions.
    this pass (a component another team owns, a frozen branch, generated
    code)?
 
-Record every answer **verbatim** in the report — downstream commands, and
-`/code-modernization:modernize-brief` most of all, read them from there. Do not paraphrase
-away a caveat the human gave you.
+In a section of `PREFLIGHT.md` called **Answers**, write each of the five
+questions as listed, with the person's answer **verbatim** under it. Do not
+paraphrase away a caveat the human gave you. If a question has no answer (the
+tool is unavailable, as in a headless or scripted run, or the person skips it),
+write **an open item the human must fill in** under it instead. All five
+questions always appear.
 
 ## Check 1 — Detect the stack
 
@@ -125,8 +129,13 @@ with no local runtime) is normal for some legacy code: report it as a
 fact, not a failure — equivalence then degrades to recorded traces, which
 the other commands already handle.
 
-If the user passed a `[target-stack]`, do the same for it: runtime,
-package manager, test framework (`mvn -v`, `npm -v`, `pytest --version`, …).
+If a target stack was given (`$target_stack`), prove it with a throwaway
+project, not a version string (`mvn -v`, `npm -v`, `pytest --version` show
+only that the tool is installed). In a scratch directory outside `legacy/`
+(`mktemp -d`), create the smallest project the stack allows, restore its
+dependencies, build it, and run one passing test with its real package
+manager and test framework; then delete the directory. A target that cannot
+build here is a finding — report the actual error.
 
 ## Check 4 — Source completeness
 
@@ -188,10 +197,10 @@ check — it is cheap when it does not apply.
 
 ## Report
 
-Write `analysis/$system/PREFLIGHT.md`. It **leads with the Check 0 answers,
-verbatim, and the Check 6 scope-boundary finding** — those two are read by
-every downstream command (`/code-modernization:modernize-brief` above all) and are worth
-nothing paraphrased. Then a status table — one row per check, status
+Write `analysis/$system/PREFLIGHT.md`. It **leads with the Answers section
+and the Check 6 scope-boundary finding** — downstream commands read those two
+(`/code-modernization:modernize-brief` above all) and they are worth nothing
+paraphrased. Then a status table — one row per check, status
 ✅ / ⚠️ / ❌, what was found, and the fix for anything not green — followed
 by a **Ready / Ready-with-gaps / Not ready** verdict per command:
 
