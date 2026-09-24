@@ -58,7 +58,7 @@ Run in order, but each is standalone — stop, review, resume.
 
 - **`/code-modernization:modernize-extract-rules <system-dir> [module-pattern]`** — Mine the business rules — calculations, validations, eligibility, state transitions — into Given/When/Then "Rule Cards" with `file:line` citations and confidence ratings. With the Workflow tool, anything but a tiny system is extracted in per-module shards (from `map`'s `topology.json` if present, else the directory tree), so each extractor reads one focused slice. Produces `BUSINESS_RULES.md` + `DATA_OBJECTS.md`.
 
-- **`/code-modernization:modernize-brief <system-dir> [target-stack]`** — Synthesize discovery into a phased **Modernization Brief**: target architecture, phase plan, persona walkthroughs, behavior contract, and an approval block. Reads the discovery artifacts and **stops if any are missing**. Enters plan mode as a human-in-the-loop approval gate. For a same-stack uplift it also requires the **delta catalog**, since an uplift's phase order is decided by its version deltas. The execution commands read the brief and treat each phase's entry criteria as gates, so editing the brief steers execution.
+- **`/code-modernization:modernize-brief <system-dir> [target-stack]`** — Synthesize discovery into a phased **Modernization Brief**: target architecture, phase plan, persona walkthroughs, behavior contract, and an approval block. Reads the discovery artifacts and **stops if any are missing**. Stops for your explicit approval as a human-in-the-loop gate, in plan mode if the session supports it. For a same-stack uplift it also requires the **delta catalog**, since an uplift's phase order is decided by its version deltas. The execution commands read the brief and treat each phase's entry criteria as gates, so editing the brief steers execution.
 
 - **`/code-modernization:modernize-reimagine <system-dir> <target-vision>`** — Greenfield rebuild from extracted intent. Mines a spec, designs and adversarially reviews a target architecture, then scaffolds services with executable acceptance tests under `modernized/<system>-reimagined/`. Two human checkpoints.
 
@@ -90,13 +90,17 @@ A `.claude/settings.json` in the project you're modernizing enforces the core in
 ```json
 {
   "permissions": {
-    "allow": ["Read(**)", "Write(analysis/**)", "Write(modernized/**)", "Edit(analysis/**)", "Edit(modernized/**)"],
-    "deny": ["Edit(legacy/**)", "Write(legacy/**)"]
+    "allow": ["Read(**)", "Edit(analysis/**)", "Edit(modernized/**)"],
+    "deny": ["Edit(/legacy/**)"]
   }
 }
 ```
 
-This guards the file tools; shell commands that mutate files (`sed -i`, `git apply`) still go through the normal Bash prompt, so review those with the same invariant in mind. That prompt is the containment for the two steps that fan out many write-capable agents at once — `/code-modernization:modernize-uplift` Step 5b and `/code-modernization:modernize-reimagine` Phase E — so keep Bash on a *prompted* permission mode for those.
+Claude Code matches file writes through the `Edit` rule, so these cover the `Write` tool too; a `Write(path)` rule is accepted but never consulted.
+
+The deny rule starts with `/` so that it is anchored at the project root; without the slash it also matches any nested directory named `legacy`, such as `modernized/<system>/.../legacy/`. It refuses a copy out of `legacy/` too, so `uplift`'s working copy (`cp -r legacy/<system> modernized/<system>-uplifted`) needs `rsync -a legacy/<system>/ modernized/<system>-uplifted/` instead, or a copy you run yourself. If `legacy/<system>` is a symlink to a directory outside the project, add that directory to `additionalDirectories` so Claude can read through the link, and deny its real path as well, because the rule above matches the link's path and not its target's: `"additionalDirectories": ["/path/to/code"]` and `"Edit(//path/to/code/**)"` in `deny`.
+
+This guards the file tools; shell commands that mutate files (`git apply`, a script that opens files itself) still go through the normal Bash prompt, so review those with the same invariant in mind. That prompt is the containment for the two steps that fan out many write-capable agents at once — `/code-modernization:modernize-uplift` Step 5b and `/code-modernization:modernize-reimagine` Phase E — so keep Bash on a *prompted* permission mode for those.
 
 ## Prerequisites
 
