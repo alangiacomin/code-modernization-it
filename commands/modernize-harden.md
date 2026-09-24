@@ -6,9 +6,9 @@ arguments: system
 
 Run a **security hardening pass** on the legacy system: find
 vulnerabilities, rank them, and produce a reviewable patch for the
-critical ones. Parse arguments flag-independently: the system dir
-(referred to as `$system` below) is the first non-flag token in `$ARGUMENTS`;
-`--show-secrets` may appear anywhere.
+critical ones. The system dir (`$system` below) is the first argument;
+flags go after it — `<system-dir> --show-secrets` — since a flag in first
+place would be read as the system dir.
 
 This command never edits `legacy/` — it writes findings and a proposed patch
 to `analysis/$system/`. The user reviews and applies (or not).

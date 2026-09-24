@@ -6,9 +6,9 @@ arguments: system
 
 **Mode select.** If `$ARGUMENTS` starts with `--portfolio`, run **Portfolio
 mode** against the directory that follows. Otherwise run **Single-system
-mode** against the system dir. Parse flags positionally-independently:
-`--show-secrets` may appear before or after the system dir — the system
-dir is the first non-flag token.
+mode** against the system dir, which is the first token (`$system`). Flags
+go after it — `<system-dir> --show-secrets` — since a flag in first place
+would be read as the system dir.
 
 ---
 

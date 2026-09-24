@@ -26,7 +26,7 @@ The discovery commands (`assess`, `map`, `extract-rules`) write artifacts to `an
 
 Each command takes a `<system-dir>` and assumes the code lives at `legacy/<system-dir>/`. Artifacts land in `analysis/<system-dir>/`; new code in `modernized/<system-dir>/`. If your code is elsewhere, symlink it: `mkdir -p legacy && ln -s /path/to/code legacy/billing`.
 
-Plugin commands are namespaced, so type the full name — `/code-modernization:modernize-…` (autocomplete finds it from `/modernize`).
+Plugin commands are namespaced, so type the full name — `/code-modernization:modernize-…` (autocomplete finds it from `/modernize`). Flags go after the positional arguments (`/code-modernization:modernize-harden billing --show-secrets`): the first argument is the system directory, except for `assess --portfolio`, whose mode flag comes first.
 
 Try the first three on your own codebase — each produces a standalone artifact, so you can stop and review at any point:
 
@@ -52,7 +52,7 @@ Run in order, but each is standalone — stop, review, resume.
 
 - **`/code-modernization:modernize-preflight <system-dir> [target-stack]`** — Environment readiness check. Asks you, in a pop-up, the five questions the source can't answer (scope, whether you can build and test locally, bespoke build infrastructure, prior attempts, what's off limits) and records your answers verbatim. Then it detects the legacy stack, checks analysis tooling, reads the CI/build definition, smoke-tests the toolchain against the real code (and, if you name a target stack, that a throwaway project builds on it here), inventories missing includes / deployment descriptors, and checks the **scope boundary** — whether `<system-dir>` is a slice of a larger repo and what outside it depends on it. Produces `PREFLIGHT.md` with a per-command Ready / Ready-with-gaps / Not-ready verdict.
 
-- **`/code-modernization:modernize-assess <system-dir>`** *(or `--portfolio <parent-dir>`)* — Inventory: languages, complexity, tech debt, security posture, and a COCOMO complexity index ([see note](#a-note-on-cocomo)). Produces `ASSESSMENT.md` + `ARCHITECTURE.mmd`. With `--portfolio`, sweeps every subdirectory and writes a sequencing heat-map (`portfolio.html`).
+- **`/code-modernization:modernize-assess <system-dir> [--show-secrets]`** *(or `--portfolio <parent-dir>`)* — Inventory: languages, complexity, tech debt, security posture, and a COCOMO complexity index ([see note](#a-note-on-cocomo)). Produces `ASSESSMENT.md` + `ARCHITECTURE.mmd`. With `--portfolio`, sweeps every subdirectory and writes a sequencing heat-map (`portfolio.html`).
 
 - **`/code-modernization:modernize-map <system-dir> [--no-describe]`** — Dependency and topology map: call graph, data lineage, entry points, and 2–4 business flows each traced for a persona (the claimant, the auditor). Produces `topology.json` and an **interactive zoomable `TOPOLOGY.html`** (circle-pack sized by LOC, edge toggles, search, and a persona-flow walkthrough), plus small `.mmd` diagrams for docs. Each node also gets a short plain-language description in the sidebar, written by one agent per node from just that node's source and links; `--no-describe` skips that step.
 
@@ -66,7 +66,7 @@ Run in order, but each is standalone — stop, review, resume.
 
 - **`/code-modernization:modernize-uplift <system-dir> <source-version> <target-version> [project-pattern]`** — Same-stack version bump (e.g. `.NET Framework 4.8` → `.NET 8`, Spring Boot 2 → 3) — the common case `transform` gets wrong by rewriting. Preserves the code and makes the smallest diffs that compile and behave identically, driven by a **delta catalog** (the known breaking changes that *this* code actually hits) and the ecosystem's migration tooling. Equivalence is proven by running the test suite on both the old and new runtime where both can run here (otherwise it falls back to characterization tests, like `transform`). Migration is **pilot-first**: one representative project is migrated end-to-end in-session and its lessons written to a `PLAYBOOK.md` before anything else is touched; the rest then fan out, one agent per project, in **dependency-aware escalating batches behind a circuit breaker**. Produces `DELTA_CATALOG.md`, `BASELINE.md`, `PLAYBOOK.md` + `UPLIFT_NOTES.md`. If the catalog shows most of the code is forced to change, it tells you to use `transform` instead.
 
-- **`/code-modernization:modernize-harden <system-dir>`** — Security pass on the **legacy** system: OWASP/CWE, dependency CVEs, secrets, injection. Produces `SECURITY_FINDINGS.md` (ranked) and a reviewed `security_remediation.patch`. **Never edits `legacy/`** — you review and apply the patch yourself. Useful while the legacy system keeps running in production during migration.
+- **`/code-modernization:modernize-harden <system-dir> [--show-secrets]`** — Security pass on the **legacy** system: OWASP/CWE, dependency CVEs, secrets, injection. Produces `SECURITY_FINDINGS.md` (ranked) and a reviewed `security_remediation.patch`. **Never edits `legacy/`** — you review and apply the patch yourself. Useful while the legacy system keeps running in production during migration.
 
 - **`/code-modernization:modernize-status <system-dir>`** — Read-only progress report: artifact inventory, staleness flags, secrets-hygiene checks, and the single most useful next command.
 
