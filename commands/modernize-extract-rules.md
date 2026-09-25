@@ -10,7 +10,7 @@ engineers about to retire. If a module pattern was given (`$module_pattern`), fo
 there; otherwise cover the whole system. Prioritize calculation, validation, eligibility
 and state-transition logic over plumbing.
 
-The code is `legacy/$system`, often a symlink to where it really lives: say where it points (`readlink legacy/$system`) in one line before you start.
+The code is `legacy/$system`, often a symlink to where it really lives: say where it points (`readlink legacy/$system`) in one line before you start. Run every subagent in the foreground and wait for its result: never end your turn while one is still running.
 
 ## Method A — Workflow (preferred when the Workflow tool is available)
 
@@ -121,7 +121,7 @@ them, location) in this format:
 ### RULE-NNN: <plain-English name>
 **Category:** Calculation | Validation | Lifecycle | Policy
 **Priority:** P0 | P1 | P2
-**Source:** `path/to/file.ext:line-line`   (path relative to legacy/$system)
+**Source:** `path/to/file.ext:line-line`   (ONE range, path relative to legacy/$system)
 **Plain English:** One sentence a business analyst would recognize.
 **Specification:**
   Given <precondition>
@@ -134,8 +134,9 @@ them, location) in this format:
 ```
 
 Headings are exactly `### RULE-NNN: <name>`, numbered in sequence: later commands find rules by
-that pattern. **P0** if the rule moves money, enforces a regulatory requirement or guards data
-integrity (P0 below High confidence needs an SME); **P2** for display and convenience; else
+that pattern. **P0** if the system's core purpose depends on the rule or a wrong result is costly or irreversible
+(it moves money, enforces a legal or regulatory requirement, guards data integrity, security or safety,
+or is the central calculation or decision the system exists to perform; P0 below High confidence needs an SME); **P2** for display and convenience; else
 **P1**. The brief's behavior contract is built from the P0 rules. Start the file with a summary
 table (ID, name, category, priority, source, confidence) and end it with a **Rules requiring SME
 confirmation** section listing each Medium and Low rule with its question.

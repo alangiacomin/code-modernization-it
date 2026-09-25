@@ -5,7 +5,7 @@
 
 Reads analysis/<system>/rules_result.json (the object the workflow returned, saved by the
 command) and writes analysis/<system>/BUSINESS_RULES.md and DATA_OBJECTS.md. Rules are
-numbered RULE-001, RULE-002, ... in priority then category order and the heading is always
+numbered RULE-001, RULE-002, ... in the order they appear (by category, then priority) and the heading is always
 `### RULE-NNN: <name>`, the pattern later commands and the pane look for. Every value comes
 from analysis of untrusted code, so it is written as plain text on one line where it is
 a heading or a table cell. Standard library only.
@@ -83,9 +83,10 @@ def main(argv):
         print(f'Cannot read {result_path}: {error}', file=sys.stderr)
         return 1
 
+    # Numbered in the order they appear in the document (by category, then priority), so RULE-001.. read in sequence.
     rules = sorted(result.get('confirmedRules') or [],
-                   key=lambda r: (PRIORITY.get(r.get('priority'), 1),
-                                  CATEGORIES.index(r['category']) if r.get('category') in CATEGORIES else 9,
+                   key=lambda r: (CATEGORIES.index(r['category']) if r.get('category') in CATEGORIES else 9,
+                                  PRIORITY.get(r.get('priority'), 1),
                                   str(r.get('source'))))
     numbered = [(i + 1, r) for i, r in enumerate(rules)]
     rendered = {n: render_rule(n, r) for n, r in numbered}

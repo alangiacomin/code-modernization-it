@@ -5,7 +5,7 @@ arguments: system source_version target_version project_pattern
 ---
 
 Uplift `$system` from **legacy/$system_version** to **$target_version**: same stack, newer version.
-The code is `legacy/$system`, often a symlink to where it really lives: say where it points (`readlink legacy/$system`) in one line before you start.
+The code is `legacy/$system`, often a symlink to where it really lives: say where it points (`readlink legacy/$system`) in one line before you start. Run every subagent in the foreground and wait for its result: never end your turn while one is still running.
 
 This is **not** `transform`, which extracts intent and rewrites idiomatically. Here the code is good
 and only needs to run on a newer runtime. **Preserve structure and make the smallest diffs that compile

@@ -9,7 +9,7 @@ directory that follows. Otherwise run **Single-system mode** on `$system`, the
 first token. Flags go after it (`<system> --show-secrets`): a flag in first place
 would be read as the system name.
 
-The code is `legacy/$system`, often a symlink to where it really lives: say where it points (`readlink legacy/$system`) in one line before you start.
+The code is `legacy/$system`, often a symlink to where it really lives: say where it points (`readlink legacy/$system`) in one line before you start. Run every subagent in the foreground and wait for its result: never end your turn while one is still running.
 
 ---
 

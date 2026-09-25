@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -149,6 +150,8 @@ class RenderTests(unittest.TestCase):
             headings = [line for line in text.splitlines() if line.startswith('### ')]
             self.assertEqual(len(headings), 2, headings)
             self.assertNotIn('\n# injected heading', text)
+            ids = [int(n) for n in re.findall(r'^### RULE-(\d+): ', text, re.M)]
+            self.assertEqual(ids, list(range(1, len(ids) + 1)), 'rule numbers read in sequence down the document')
             self.assertIn('Rules requiring SME confirmation', text)
             self.assertIn('Is it 5 or 6?', text)
             self.assertIn('Coverage gaps', text)

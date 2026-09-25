@@ -6,7 +6,7 @@ arguments: system
 
 The first token of `$ARGUMENTS` is the system name (`$system`); **everything after it is the target
 vision**, usually several words, so do not truncate it. Below, `<vision>` means that whole remainder.
-The code is `legacy/$system`, often a symlink to where it really lives: say where it points (`readlink legacy/$system`) in one line before you start.
+The code is `legacy/$system`, often a symlink to where it really lives: say where it points (`readlink legacy/$system`) in one line before you start. Run every subagent in the foreground and wait for its result: never end your turn while one is still running.
 
 **Reimagine** the system as: <vision>. This is not a port but a rebuild from extracted intent: the legacy
 system is the *specification source*, not the structural template. The command orchestrates a team of

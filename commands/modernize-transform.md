@@ -8,7 +8,7 @@ Transform module **`$module`** of `$system` into **$target_stack**, with proof o
 equivalence. This is one vertical slice of the strangler fig; output goes to
 `modernized/$system/$module/`.
 
-The code is `legacy/$system`, often a symlink to where it really lives: say where it points (`readlink legacy/$system`) in one line before you start. **If `$module` or `$target_stack` is empty**, read
+The code is `legacy/$system`, often a symlink to where it really lives: say where it points (`readlink legacy/$system`) in one line before you start. Run every subagent in the foreground and wait for its result: never end your turn while one is still running. **If `$module` or `$target_stack` is empty**, read
 `analysis/$system/MODERNIZATION_BRIEF.md`: take the target stack it names, and the first module of
 the earliest phase whose `Command:` is `transform` that has no
 `modernized/$system/<module>/TRANSFORMATION_NOTES.md` yet. Say which you picked.

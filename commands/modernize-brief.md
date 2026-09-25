@@ -23,8 +23,9 @@ in `analysis/$system/` first. If any is missing, say so and stop: they come from
   An uplift's phase order is decided by its version deltas, above all by whether the existing
   tests can even run on the target runtime; phasing without the catalog is planning blind. If it
   is missing, produce it first (`/code-modernization:modernize-uplift $system <source> $target_stack`
-  through its delta-catalog step, or the **version-delta-analyst** agent), then return. Do not
-  guess at deltas.
+  through its delta-catalog step, or the **version-delta-analyst** agent) and **wait for its result**:
+  never end your turn while an agent is still running, and never write the brief before the catalog
+  exists. Do not guess at deltas.
 
 **Staleness.** If an input is newer than an existing `MODERNIZATION_BRIEF.md`, regenerating is
 justified. If the brief is newer than every input and the user re-ran this anyway, ask what
@@ -94,8 +95,8 @@ persona, what happens in business language, which legacy modules implement it, a
 replaces each. This is the section non-technical approvers read. With no flows, derive 2–3 from the
 entry points and mark them as needing SME confirmation.
 
-**5. Behavior Contract.** The **P0 rules** from `BUSINESS_RULES.md` (money, regulatory, data
-integrity) that MUST be proven equivalent before any phase ships: they become the regression suite.
+**5. Behavior Contract.** The **P0 rules** from `BUSINESS_RULES.md` (the ones the system's core purpose
+depends on, or that are costly if wrong) that MUST be proven equivalent before any phase ships: they become the regression suite.
 Flag any P0 rule below High confidence as a blocker needing SME confirmation before its phase starts.
 
 **6. Validation Strategy.** Which combination applies, per phase: characterization tests, contract
