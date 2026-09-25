@@ -139,8 +139,13 @@ Inventory** · **Architecture at a Glance** (domain table, refer to the diagram)
 plainly that it is not a timeline or a cost, and print no person-months, schedule,
 cost or date) · **Recommended Modernization Pattern**: one of Rehost, Replatform,
 Refactor, Rearchitect, Rebuild, Replace, with a one-paragraph rationale and the
-command it routes to (same-stack version bump → `uplift`; cross-stack rearchitect
-→ `transform`; rebuild → `reimagine`).
+command it routes to: a move to a newer version of the same technology (or its
+supporting platform) → `uplift`; a rewrite in another technology, piece by piece →
+`transform`; a rebuild on a new architecture → `reimagine`. Rehost (move as is) and
+Replace (buy or adopt a product) change no code, so no build command applies: say so,
+and say what the analysis is still good for. For Rehost, `map`, `harden` and the `preflight`
+build check show what the move must carry along; for Replace, `extract-rules` turns
+what the system does into the acceptance criteria a replacement is judged against.
 
 Also write `analysis/$system/ARCHITECTURE.mmd`, the domain diagram from the
 legacy-analyst.

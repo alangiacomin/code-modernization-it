@@ -8,6 +8,7 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PLUGIN = os.path.dirname(os.path.dirname(HERE))
@@ -83,13 +84,42 @@ class ToleranceTests(unittest.TestCase):
         res = self.run_cases([a, b], tolerance=TOL)
         self.assertEqual([r["verdict"] for r in res["cases"]], ["same", "differs"])
 
-    def test_the_self_check_fails_when_the_tolerance_would_hide_any_change(self):
-        # every byte is a tolerated float digit and the tolerance is 1%: a one-byte change to a low digit is invisible,
-        # but the leading-digit change must still be caught, so the check passes here and the outputs still compare
-        res = self.run_cases([self.case("a", b"5.5\n", b"5.5\n", tolerance={"abs": 100, "why": "absurdly loose"})])
+    def test_an_absolute_tolerance_is_capped_like_a_relative_one(self):
+        for bad in ({"abs": 1e-3, "why": "x"}, {"abs": 100, "why": "x"}):
+            with self.assertRaises(cmp.InputError, msg=repr(bad)):
+                self.run_cases([self.case("a", b"5.5\n", b"5.5\n", tolerance=bad)])
+        ok = self.run_cases([self.case("a", b"x 0.0000000000000001\n", b"x 0.0\n", tolerance={"abs": 1e-9, "why": "a value that is zero to rounding"})])
+        self.assertEqual(ok["cases"][0]["verdict"], "same")
+
+    def test_the_self_check_still_fails_if_a_loose_tolerance_ever_got_through(self):
+        loose = {"abs": 100, "why": "absurdly loose"}
+        with mock.patch.object(cmp, "MAX_ABS_TOLERANCE", 1000.0):
+            res = self.run_cases([self.case("a", b"5.5\n", b"5.5\n", tolerance=loose)])
         self.assertFalse(res["selfCheck"]["passed"])
         self.assertIn("tolerance may be too loose", res["selfCheck"]["detail"])
         self.assertIn("self-check failed", cmp.verdict_of(res))
+
+    def test_dotted_identifiers_are_text_and_must_match_exactly(self):
+        for legacy, new in ((b"version 1.2.3\n", b"version 1.2.4\n"), (b"host 10.0.0.1\n", b"host 10.0.0.2\n"),
+                            (b"build 2026.09.24 ok\n", b"build 2026.09.25 ok\n")):
+            res = self.run_cases([self.case("a", legacy, new, tolerance={"rel": 0.01, "why": "test"})])
+            self.assertEqual(res["cases"][0]["verdict"], "differs", (legacy, new))
+        same = self.run_cases([self.case("a", b"version 1.2.3 total 1.0000000001\n", b"version 1.2.3 total 1.0000000002\n", tolerance=TOL)])
+        self.assertEqual(same["cases"][0]["verdict"], "same")
+
+    def test_the_comparison_is_exact_decimal_arithmetic_not_doubles(self):
+        # 1e-22 apart: equal as doubles, but far outside a declared 1e-30 relative tolerance
+        tight = {"rel": 1e-30, "why": "essentially exact"}
+        res = self.run_cases([self.case("a", b"1.0000000000000000000001\n", b"1.0000000000000000000002\n", tolerance=tight)])
+        self.assertEqual(res["cases"][0]["verdict"], "differs")
+        wide = {"rel": 1e-21, "why": "test"}
+        res = self.run_cases([self.case("a", b"1.0000000000000000000001\n", b"1.0000000000000000000002\n", tolerance=wide)])
+        self.assertEqual(res["cases"][0]["verdict"], "same")
+
+    def test_absurd_numbers_do_not_crash_or_pass(self):
+        for legacy, new in ((b"v 1e999999999999\n", b"v 1e999999999998\n"), (b"v 1." + b"1" * 200 + b"\n", b"v 1." + b"1" * 199 + b"2\n")):
+            res = self.run_cases([self.case("a", legacy, new, tolerance=TOL)])
+            self.assertEqual(res["cases"][0]["verdict"], "differs")
 
     def test_masks_and_tolerance_work_together(self):
         res = self.run_cases([self.case("a", b"at 2026-09-24 10:00:00 value 2.0000000001\n", b"at 2027-01-01 11:11:11 value 2.0000000002\n",

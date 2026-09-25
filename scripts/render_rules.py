@@ -112,7 +112,8 @@ def main(argv):
     stats = result.get('stats') or {}
 
     doc = [f'# Business Rules — {one_line(system, 80)}', '',
-           f"{len(rules)} confirmed rules ({sum(1 for r in rules if r.get('priority') == 'P0')} P0). "
+           f"At extraction: {len(rules)} confirmed rules ({sum(1 for r in rules if r.get('priority') == 'P0')} P0); "
+           f"later steps may add or correct rules below. "
            f"Each citation was checked by a second agent that read the cited lines; "
            f"{len(result.get('rejectedRules') or [])} candidate rules were refuted and left out.", '',
            '| ID | Name | Category | Priority | Source | Confidence |', '|---|---|---|---|---|---|']

@@ -29,9 +29,10 @@ compiler or math library) can be compared within a declared tolerance, per case 
     "tolerance": {"rel": 1e-9, "abs": 0, "why": "last-digit rounding of the exp() in the interest formula"}
 
 The reason is required and is recorded. Only numbers written with a decimal point or an exponent
-may differ, and only within the tolerance; every other byte, and every integer, must match exactly.
-The case is `same`, with the largest relative difference recorded; anything outside the tolerance
-is `differs`. A relative tolerance above 1% is refused: that is a different result, not rounding.
+may differ, and only within the tolerance (compared as exact decimals); every other byte, every integer and every
+dotted run like 1.2.3 must match exactly. The case is `same`, with the largest relative difference
+recorded; anything outside the tolerance is `differs`. A relative tolerance above 1% or an absolute one
+above 1e-6 is refused: that is a different result, not rounding.
 
 Writes EQUIVALENCE.json (default: next to the cases file). Exit 0 only when at least one case
 executed, none is missing or differs (approved differences are allowed), the self-check did not
@@ -41,6 +42,7 @@ import argparse
 import bisect
 import datetime
 import hashlib
+import decimal
 import json
 import math
 import os
@@ -51,7 +53,10 @@ import tempfile
 MARK = b"\x00<MASK>\x00"
 MAX_BYTES = 256 * 1024 * 1024
 MAX_TOLERANT_BYTES = 32 * 1024 * 1024
-NUMBER = re.compile(rb"[-+]?(?:\d+\.\d*|\.\d+|\d+)(?:[eE][-+]?\d+)?")
+# A dotted run such as 1.2.3 or 10.0.0.1 is an identifier, not a number: it is left inside the text around it.
+NUMBER = re.compile(rb"(?P<dotted>\d+(?:\.\d+){2,})|(?P<num>[-+]?(?:\d+\.\d*|\.\d+|\d+)(?:[eE][-+]?\d+)?)")
+MAX_ABS_TOLERANCE = 1e-6
+MAX_NUMBER_CHARS = 64
 
 
 class InputError(Exception):
@@ -99,6 +104,8 @@ def parse_tolerance(spec, cid):
         raise InputError("case %s: give a positive rel or abs tolerance" % cid)
     if rel > 0.01:
         raise InputError("case %s: a relative tolerance above 1%% is a different result, not rounding" % cid)
+    if ab > MAX_ABS_TOLERANCE:
+        raise InputError("case %s: an absolute tolerance above %g is a different result, not rounding" % (cid, MAX_ABS_TOLERANCE))
     why = clip(spec.get("why"), 300).strip()
     if not why:
         raise InputError("case %s: a tolerance needs a 'why' saying what legitimately differs" % cid)
@@ -109,6 +116,8 @@ def split_numbers(data):
     """-> [(is_number, bytes, offset)] covering `data` end to end."""
     parts, pos = [], 0
     for m in NUMBER.finditer(data):
+        if m.group("dotted") is not None:
+            continue
         if m.start() > pos:
             parts.append((False, data[pos:m.start()], pos))
         parts.append((True, m.group(), m.start()))
@@ -129,6 +138,7 @@ def within_tolerance(a, b, tol):
     ta, tb = split_numbers(a), split_numbers(b)
     if len(ta) != len(tb):
         return False, first_diff(a, b) or 0
+    allow_abs, allow_rel = decimal.Decimal(repr(tol["abs"])), decimal.Decimal(repr(tol["rel"]))
     differing, worst = 0, 0.0
     for (na, xa, sa), (nb, xb, _) in zip(ta, tb):
         if xa == xb:
@@ -137,19 +147,20 @@ def within_tolerance(a, b, tol):
             return False, sa
         if not na:
             return False, sa + (first_diff(xa, xb) or 0)
-        if not (is_float(xa) and is_float(xb)):
-            return False, sa                      # an integer must match exactly
-        try:
-            x, y = float(xa), float(xb)
-        except ValueError:
-            return False, sa
-        if not (math.isfinite(x) and math.isfinite(y)):
-            return False, sa
-        scale = max(abs(x), abs(y))
-        if abs(x - y) > max(tol["abs"], tol["rel"] * scale):
+        if not (is_float(xa) and is_float(xb)) or max(len(xa), len(xb)) > MAX_NUMBER_CHARS:
+            return False, sa                      # an integer, or a very long number, must match exactly
+        try:                                      # exact decimal arithmetic: no double-precision blind spot
+            x, y = decimal.Decimal(xa.decode("ascii")), decimal.Decimal(xb.decode("ascii"))
+            if not (x.is_finite() and y.is_finite()):
+                return False, sa
+            scale, diff = max(abs(x), abs(y)), abs(x - y)
+            if diff > max(allow_abs, allow_rel * scale):
+                return False, sa
+            if scale:
+                worst = max(worst, float(diff / scale))
+        except (ArithmeticError, ValueError):
             return False, sa
         differing += 1
-        worst = max(worst, abs(x - y) / scale if scale else 0.0)
     return True, {"differing": differing, "maxRelativeDifference": worst}
 
 
@@ -338,11 +349,16 @@ def self_check(items):
         spots = [free[0][0], free[-1][1] - 1, (biggest[0] + biggest[1]) // 2]
         caught = any(differs_under(flip(p), data, masks, tol) for p in spots)
         if tol and caught:
-            # A tolerance must never hide a change to the numbers it covers: flipping the leading digit of a tolerated
-            # float (one that is not masked) has to be reported, or the tolerance is too loose to prove anything.
-            floats = [m.start() for m in list(NUMBER.finditer(data[:1 << 20]))[:200]
-                      if is_float(m.group()) and any(a <= m.start() < b for a, b in free)]
-            caught = not floats or any(differs_under(flip(p), data, masks, tol) for p in floats)
+            # A tolerance must never hide a change to the numbers it covers: changing the leading digit of every
+            # sampled float that is not masked has to be reported, or the tolerance is too loose to prove anything.
+            for m in list(NUMBER.finditer(data[:1 << 20]))[:200]:
+                token = m.group("num")
+                if token is None or not is_float(token) or not any(a <= m.start() < b for a, b in free):
+                    continue
+                at = m.start() + next(i for i, c in enumerate(token) if 48 <= c <= 57)
+                if not differs_under(flip(at), data, masks, tol):
+                    caught = False
+                    break
         if not caught:
             return False, "case %s: a one-byte change to the legacy output was not reported as different%s" % (
                 cid, " (the tolerance may be too loose)" if tol else "")
