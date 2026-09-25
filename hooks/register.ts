@@ -731,8 +731,8 @@ export function register(on: On, raw: PluginOptions) {
         .catch(() => undefined),
       host
         .registerCommand({
-          name: 'modernize-review',
-          description: 'Review business rules one card at a time: confirm, wrong, or discuss',
+          name: 'modernize-review-pane',
+          description: 'Review business rules one card at a time in the pane: confirm, wrong, or discuss',
           argumentHint: '[flagged|p0|all] [filter]',
         })
         .catch(() => undefined),
@@ -1023,7 +1023,7 @@ export function register(on: On, raw: PluginOptions) {
     return { text: opened.isPlaced ? 'Modernization pane shown' : `The pane could not be shown: ${opened.reason}` }
   })
 
-  on('command.run', { command: 'modernize-review' }, async ($, e, next) => {
+  on('command.run', { command: 'modernize-review-pane' }, async ($, e, next) => {
     const host = state.host
 
     if (host === null) {

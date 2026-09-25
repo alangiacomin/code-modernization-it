@@ -21,7 +21,7 @@ Use the AskUserQuestion tool, never chat text, up to four rules per call. One qu
 
 ## 3 — Record
 
-Merge the answers into `analysis/$system/RULE_REVIEWS.json`, the same file the live progress pane's review deck writes:
+Merge the answers into `analysis/$system/RULE_REVIEWS.json`, the same file the live progress pane's review deck (`/modernize-review-pane`) writes:
 
 ```json
 { "system": "<name>", "version": 1, "reviews": {

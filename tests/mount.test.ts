@@ -72,7 +72,7 @@ describe('what the plugin draws is accepted by the terminal', () => {
 
     expect(await accepted($)({ ...BAND, plugin: PLUGIN })).toBe('terminal')
 
-    await $.command.run(command('modernize-review', 'all'))
+    await $.command.run(command('modernize-review-pane', 'all'))
     await $.ui.render(BAND)
     await $.ui.press({ plugin: PLUGIN, key: 'prev' })
 

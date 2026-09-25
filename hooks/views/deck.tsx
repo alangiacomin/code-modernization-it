@@ -101,7 +101,7 @@ export function deckView(
       <Box flexDirection="column">
         <Text bold color={HEAD}>Rule review</Text>
         <Text dimColor wrap="truncate-end">
-          {`Nothing to review among ${SCOPE_WORDS[deck.scope]}${deck.filter !== '' ? ` matching "${deck.filter}"` : ''}. Try /modernize-review all.`}
+          {`Nothing to review among ${SCOPE_WORDS[deck.scope]}${deck.filter !== '' ? ` matching "${deck.filter}"` : ''}. Try /modernize-review-pane all.`}
         </Text>
         <Button key="close" hotkey="0" plain onPress={actions.close}>close</Button>
       </Box>

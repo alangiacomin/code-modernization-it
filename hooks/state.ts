@@ -10,7 +10,7 @@ import type { Rule } from './reader/rules'
 import type { DeckScope } from './review/deck'
 
 export const PANE_ID = 'modernize'
-export const DECK_ID = 'modernize-review'
+export const DECK_ID = 'modernize-review-pane'
 export const SIGN_ID = 'modernize-sign'
 export const RASTER_KEY = 'estate'
 export const PLUGIN_NAME = 'code-modernization'

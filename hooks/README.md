@@ -107,7 +107,7 @@ the workspace root is told where the file is under the legacy root. The pane lis
 
 *The reviewer's note and the verdicts on this card are samples typed for the picture.*
 
-`/modernize-review [flagged|p0|all] [filter]` pages through rule cards in the band above the prompt: the rule, its citation,
+`/modernize-review-pane [flagged|p0|all] [filter]` pages through rule cards in the band above the prompt: the rule, its citation,
 Given / When / Then, the suspected defect, the question for an SME, and, once a rule has a verdict, the verdict and the
 reviewer's note. From an empty prompt: `1` confirms, `2` marks the rule wrong, `3` sends it to discussion, `4` goes back,
 `5` skips, `6` shows the cited legacy lines, `7` takes a verdict back and `0` closes the deck.
@@ -161,7 +161,7 @@ seconds while idle.
 | | |
 |---|---|
 | `/modernize-panel [open\|close\|json]` | Show or hide the pane (the same switch as its **hide** and **show pane** buttons); `json` prints the reading it draws from. |
-| `/modernize-review [flagged\|p0\|all] [filter]` | The review deck. `flagged` (default) is the P0 rules with a defect, an SME note or less than High confidence. The filter matches an id, a domain, a title or a cited file. Not the same as `/code-modernization:modernize-review`, the plugin command that asks in pop-ups and works without the pane. |
+| `/modernize-review-pane [flagged\|p0\|all] [filter]` | The review deck. `flagged` (default) is the P0 rules with a defect, an SME note or less than High confidence. The filter matches an id, a domain, a title or a cited file. Not the same as `/code-modernization:modernize-review`, the plugin command that asks in pop-ups and works without the pane. |
 | `/modernize-sign [name, role]` | Sign the brief's approval block. |
 
 ## Pane options

@@ -15,7 +15,7 @@ describe('start and pane', () => {
     mock.clock(on)
     await $.session.start(SESSION)
 
-    expect(world.commands.sort()).toEqual(['modernize-panel', 'modernize-review', 'modernize-sign'])
+    expect(world.commands.sort()).toEqual(['modernize-panel', 'modernize-review-pane', 'modernize-sign'])
     expect(world.opened).toEqual([])
   })
 
@@ -196,7 +196,7 @@ describe('start and pane', () => {
       await $.tool.call({ tool: 'Bash', command: 'mvn -q test', agentId } as never)
     }
 
-    await $.command.run(command('modernize-review', 'all'))
+    await $.command.run(command('modernize-review-pane', 'all'))
 
     const allowed = /^(#[0-9a-f]{6}|suggestion|success|error|warning|claude|inactive|subtle|text)$/
 
@@ -410,7 +410,7 @@ describe('a busy fleet', () => {
 })
 
 describe('review deck', () => {
-  test('/modernize-review draws the first flagged card in the band, and a digit decides it', async ($, on) => {
+  test('/modernize-review-pane draws the first flagged card in the band, and a digit decides it', async ($, on) => {
     const world = worldOf(on, FULL)
     const clock = mock.clock(on)
 
@@ -418,7 +418,7 @@ describe('review deck', () => {
     await $.session.start(SESSION)
 
     expect(textOf(await $.ui.render(BAND)), 'closed: the band holds only the bar that shows the pane').toContain('show pane')
-    expect(await $.command.run(command('modernize-review'))).toEqual({ text: 'Reviewing 2 rules.' })
+    expect(await $.command.run(command('modernize-review-pane'))).toEqual({ text: 'Reviewing 2 rules.' })
 
     const card = await $.ui.render(BAND)
     const text = textOf(card)
@@ -448,7 +448,7 @@ describe('review deck', () => {
     worldOf(on, FULL)
     mock.clock(on)
     await $.session.start(SESSION)
-    await $.command.run(command('modernize-review', 'all'))
+    await $.command.run(command('modernize-review-pane', 'all'))
 
     for (const maxRows of [12, 16, 20, 30]) {
       const input = { ...BAND, props: { ...BAND.props, maxRows } }
@@ -470,7 +470,7 @@ describe('review deck', () => {
 
     on('ui.render', () => ({ type: 'Text', children: ['engine'] }))
     await $.session.start(SESSION)
-    await $.command.run(command('modernize-review', 'all'))
+    await $.command.run(command('modernize-review-pane', 'all'))
     await $.ui.render(BAND)
     await $.ui.press({ plugin: NAME, key: 'prev' })
 
@@ -531,7 +531,7 @@ describe('review deck', () => {
     mock.clock(on)
     on('ui.render', () => ({ type: 'Text', children: ['engine'] }))
     await $.session.start(SESSION)
-    await $.command.run(command('modernize-review', 'p0'))
+    await $.command.run(command('modernize-review-pane', 'p0'))
     await $.ui.render(BAND)
     await $.ui.press({ plugin: NAME, key: 'close' })
 
