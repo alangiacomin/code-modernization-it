@@ -32,9 +32,10 @@ export const meta = {
 //
 //   LENS MODE — `modules` omitted. Three whole-estate lens extractors
 //   (calculations, validations, lifecycle) per round, optionally narrowed by
-//   `modulePattern`, looping until two consecutive rounds find nothing new or
-//   `maxRounds` (default 4, max 8); each round's fresh rules are refereed
-//   before the next round. Right for small systems with no topology.
+//   `modulePattern`, looping until a round adds little (fewer than 3 new rules
+//   or under 15% of what is catalogued) or `maxRounds` (default 2, max 8); each
+//   round's fresh rules are refereed before the next round. Right for small
+//   systems with no topology.
 //
 // Both modes then run the P0 panel and the DTO catalog and return the same
 // shape (plus `mode` and the module/batch/coverage stats).
@@ -74,7 +75,7 @@ if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(system)) {
   throw new Error(`Unsafe system name ${JSON.stringify(system)} — must be a plain name: letters, digits, hyphen and underscore`)
 }
 const modulePattern = (ARGS && ARGS.modulePattern) || ''
-const maxRounds = Math.max(1, Math.min((ARGS && ARGS.maxRounds) || 4, 8))
+const maxRounds = Math.max(1, Math.min((ARGS && ARGS.maxRounds) || 2, 8))
 // The code is `legacy/<system>`: a copy, or a symlink to where it really lives (`preflight --source` makes the link).
 const legacyDir = `legacy/${system}`
 
@@ -352,6 +353,10 @@ const LENSES = [
   },
 ]
 
+// How fine to cut rules. Without this a model can always find one more micro-behavior in a small program, so a
+// thousand-line utility yields hundreds of "rules" and the run never converges.
+const GRANULARITY = `How fine to cut rules: one rule per business decision or calculation, not one per branch, case, field or line. Group cases that share one decision into a single rule and list them in edgeCases. Skip plumbing (argument parsing, formatting a value for display, loops that only walk a list). Write the rules a domain expert would put on a one-page specification of this code: usually one rule per 40 to 80 lines of real logic, fewer for boilerplate. Rate P0 only for the few rules that would defeat the system's purpose if they were wrong; if more than one in four of your rules is P0, re-rate the rest.`
+
 // ---- shared extraction state + steps (both modes) ----------------------------
 const seen = new Map() // dedup key -> rule (kept across rounds/batches, including refuted rules so they don't resurface)
 const confirmed = []
@@ -521,6 +526,7 @@ Cover all three lenses in this one pass:
 - lifecycle: ${LENSES[2].brief}.
 Stay inside these files. You may open other files only to resolve a reference (a called routine, a constant, a shared record layout), and every rule you return must cite one of the listed files.
 Prioritize calculation, validation, eligibility, and state-transition logic over plumbing.
+${GRANULARITY}
 Every rule needs a precise file:line-line citation you actually read, its path relative to ${legacyDir}/ (for example app/src/rates.ext:120-148, not ${legacyDir}/app/src/rates.ext:120-148).
 category is exactly one of: Calculation, Validation, Lifecycle, Policy.
 List the files you actually read in coveredAreas.
@@ -560,9 +566,9 @@ ${UNTRUSTED}`
     )
   }
 } else {
-  // Lens mode: loop until two consecutive rounds come up dry (or maxRounds).
+  // Lens mode: loop until a round adds little (diminishing returns) or maxRounds.
   let dryRounds = 0
-  while (dryRounds < 2 && round < maxRounds) {
+  while (dryRounds < 1 && round < maxRounds) {
     const { n, why } = extractorCapacity()
     if (n < LENSES.length) {
       log(`Stopping extraction: ${why}`)
@@ -583,6 +589,7 @@ ${UNTRUSTED}`
 Your lens this pass: ${lens.brief}.
 Round ${round}: ${round === 1 ? 'start with the highest-value modules (entry points, anything that computes or guards money/state).' : 'target areas NOT in the already-catalogued list below — open files no prior pass cited.'}
 Prioritize calculation, validation, eligibility, and state-transition logic over plumbing.
+${GRANULARITY}
 Every rule needs a precise file:line-line citation you actually read, its path relative to ${legacyDir}/ (for example app/src/rates.ext:120-148, not ${legacyDir}/app/src/rates.ext:120-148).
 category is exactly one of: Calculation, Validation, Lifecycle, Policy.
 ${alreadyBlock}
@@ -599,11 +606,13 @@ ${UNTRUSTED}`,
       dryRounds += 1
       continue
     }
-    dryRounds = 0
+    // A round that adds under 15% of the catalogue (and fewer than 3 rules of it) is diminishing returns: referee it, then stop.
+    if (fresh.length < Math.max(3, Math.ceil((seen.size - fresh.length) * 0.15))) dryRounds += 1
+    else dryRounds = 0
 
     await verifyAndFold(fresh)
   }
-  if (round >= maxRounds && dryRounds < 2) {
+  if (round >= maxRounds && dryRounds < 1) {
     log(`Coverage note: stopped at maxRounds=${maxRounds} before extraction ran dry — large estates may hold more rules. Re-run with a modulePattern or higher maxRounds for the tail, or run /code-modernization:modernize-map first and pass modules.`)
   }
 }
