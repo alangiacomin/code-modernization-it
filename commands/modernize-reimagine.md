@@ -1,11 +1,11 @@
 ---
 description: Rebuild the system from its extracted intent on a new architecture, with two human checkpoints
-argument-hint: <system> <target-vision>
+argument-hint: <system> [target-vision]
 arguments: system
 ---
 
 The first token of `$ARGUMENTS` is the system name (`$system`); **everything after it is the target
-vision**, usually several words, so do not truncate it. Below, `<vision>` means that whole remainder.
+vision**, usually several words, so do not truncate it (with none, use the one in `analysis/$system/INTENT.md`). Below, `<vision>` means that whole remainder.
 The code is `legacy/$system`, often a symlink to where it really lives: say where it points (`readlink legacy/$system`) in one line before you start. Run every subagent in the foreground and wait for its result: never end your turn while one is still running.
 
 **Reimagine** the system as: <vision>. This is not a port but a rebuild from extracted intent: the legacy

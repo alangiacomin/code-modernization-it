@@ -16,6 +16,7 @@ presence and modification time:
 
 | Stage | Artifacts |
 |---|---|
+| intent | `INTENT.md` (what the person wants; written by `/code-modernization:modernize`) |
 | preflight | `PREFLIGHT.md` (are the Check 0 human answers and the Check 6 scope-boundary finding there?), where `legacy/$system` points (does that directory exist?) |
 | assess | `ASSESSMENT.md`, `ARCHITECTURE.mmd` |
 | map | `topology.json`, `TOPOLOGY.html`, `*.mmd`, `extract_topology.*` |

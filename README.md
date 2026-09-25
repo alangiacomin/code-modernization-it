@@ -12,11 +12,19 @@ Point Claude at a legacy codebase (COBOL, Java, .NET, PHP, Perl, Python 2, C and
 
 ## Start here
 
-1. **Point it at your code.** In a workspace folder, put the code at `legacy/<name>` (a copy or a symlink), or leave it where it is and pass `--source <path>` in step 2: preflight makes the `legacy/<name>` link for you and copies nothing. `<name>` is a short label: letters, digits, `-` and `_`.
-2. **Run** `/code-modernization:modernize-preflight <name>` (add `--source /path/to/code` if it lives elsewhere).
-3. **Follow the "next step" line** each command ends with, or run `/code-modernization:modernize-status <name>` at any time: it says where you are and gives the exact command to paste.
+Type `/code-modernization:modernize` in a workspace folder (autocomplete finds it from `/modernize`). It asks what you want to do with
+your code, finds it (a `legacy/<name>` copy or symlink, or a folder you point it at), writes your answers down once, shows the road
+ahead, and gives you the exact first command. You can also run any command directly:
 
-Commands are namespaced, so type the full name (autocomplete finds it from `/modernize`). Flags go after the arguments. No command edits your code: they write to `analysis/<name>/` and `modernized/`, and each refreshes `analysis/<name>/REPORT.html`, one page with everything found so far that you can open or share.
+1. **Point it at your code.** Put it at `legacy/<name>` (a copy or a symlink), or pass `--source <path>` to preflight: it makes the
+   `legacy/<name>` link for you and copies nothing. `<name>` is a short label: letters, digits, `-` and `_`.
+2. **Run** `/code-modernization:modernize-preflight <name>`.
+3. **Follow the "next step" line** each command ends with, or run `/code-modernization:modernize-status <name>` at any time: it says
+   where you are and gives the exact command to paste.
+
+Commands are namespaced, so type the full name. Flags go after the arguments. No command edits your code: they write to
+`analysis/<name>/` and `modernized/`, and each refreshes `analysis/<name>/REPORT.html`, one page with everything found so far that
+you can open or share.
 
 ## The path
 

@@ -6,13 +6,17 @@ arguments: system target_stack
 
 Synthesize everything in `analysis/$system/` into a **Modernization Brief**: the single
 document a steering committee approves and engineering executes. Target stack:
-`$target_stack` (if blank, recommend one from the assessment).
+`$target_stack` (if blank, the one in `analysis/$system/INTENT.md`, else recommend one from the assessment).
 
 Read `ASSESSMENT.md`, `topology.json` (and the `.mmd` files beside it; never read
 `TOPOLOGY.html`, it is a viewer with the data minified inside) and `BUSINESS_RULES.md`
 in `analysis/$system/` first. If any is missing, say so and stop: they come from `assess`,
-`map` and `extract-rules`, which run first. Two more inputs are conditional:
+`map` and `extract-rules`, which run first. Three more inputs are conditional:
 
+- **`INTENT.md`**, if it exists (written by `/code-modernization:modernize`): what the person wants (goal, target,
+  what must stay true). It is the objective of this plan; never override it with a guess. Its goal decides each
+  phase's build command: a newer version of the same technology means `uplift`, a rewrite in another technology
+  means `transform`, a rebuild on a new architecture means `reimagine`. Without it, the assessment's pattern decides.
 - **`PREFLIGHT.md`**, if it exists. It holds two things nothing else has: the human's answers
   to preflight Check 0 (scope, local build and test, bespoke build infrastructure, prior
   attempts, what is off limits) and the Check 6 **scope boundary** (whether the source is a
