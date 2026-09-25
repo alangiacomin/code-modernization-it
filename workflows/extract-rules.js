@@ -3,7 +3,7 @@ export const meta = {
   description:
     'Business-rule mining — one extractor per module in ordered batches when given a module list (else loop-until-dry lens extraction), per-rule citation verification, and a P0 confirmation panel',
   whenToUse:
-    'Invoked by /code-modernization:modernize-extract-rules when the Workflow tool is available. Requires args {system, sourceDir?, modules?: [{name, domain?, files, loc?}], batchSize?, modulePattern?, maxRounds?} — pass `modules` (built from analysis/<system>/topology.json or the directory tree) to shard extraction per module; omit it for whole-estate lens extraction on small systems. Returns structured rule cards — the calling session writes BUSINESS_RULES.md and DATA_OBJECTS.md from them. Resumable after a stop: re-invoke with identical args plus resumeFromRunId and completed agents replay from the journal.',
+    'Invoked by /code-modernization:modernize-extract-rules when the Workflow tool is available. Requires args {system, modules?: [{name, domain?, files, loc?}], batchSize?, modulePattern?, maxRounds?} — pass `modules` (built from analysis/<system>/topology.json or the directory tree) to shard extraction per module; omit it for whole-estate lens extraction on small systems. Returns structured rule cards — the calling session writes BUSINESS_RULES.md and DATA_OBJECTS.md from them. Resumable after a stop: re-invoke with identical args plus resumeFromRunId and completed agents replay from the journal.',
   phases: [
     {
       title: 'Extract',
@@ -75,26 +75,8 @@ if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(system)) {
 }
 const modulePattern = (ARGS && ARGS.modulePattern) || ''
 const maxRounds = Math.max(1, Math.min((ARGS && ARGS.maxRounds) || 4, 8))
-// Where the code lives: `legacy/<system>` unless the command passes `sourceDir`, the path it read from
-// analysis/<system>/SOURCE. It lands in agent prompts, so it is checked like any text from outside:
-// one line, no quotes, backticks, angle brackets, `$`, `*`, `?` or shell separators, and nothing that
-// starts like a flag or a home directory.
-const rawSourceDir = ARGS && ARGS.sourceDir
-if (
-  rawSourceDir != null &&
-  !(
-    typeof rawSourceDir === 'string' &&
-    rawSourceDir.length > 0 &&
-    rawSourceDir.length <= 400 &&
-    rawSourceDir === rawSourceDir.trim() &&
-    !/[\x00-\x1f`<>;|&'"$*?]/.test(rawSourceDir) &&
-    !rawSourceDir.startsWith('-') &&
-    !rawSourceDir.startsWith('~')
-  )
-) {
-  throw new Error(`Unsafe sourceDir ${JSON.stringify(String(rawSourceDir).slice(0, 80))} — pass the directory as one plain line, without quotes, backticks, $ or shell separators`)
-}
-const legacyDir = rawSourceDir ? rawSourceDir.replace(/[\\/]+$/, '') || rawSourceDir : `legacy/${system}`
+// The code is `legacy/<system>`: a copy, or a symlink to where it really lives (`preflight --source` makes the link).
+const legacyDir = `legacy/${system}`
 
 // Module list (optional). Entries and file paths land in agent prompts and
 // were derived from an untrusted tree (file names), so validate shape and

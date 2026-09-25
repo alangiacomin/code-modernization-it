@@ -10,9 +10,7 @@ engineers about to retire. If a module pattern was given (`$module_pattern`), fo
 there; otherwise cover the whole system. Prioritize calculation, validation, eligibility
 and state-transition logic over plumbing.
 
-`$source` is the code: the first line of `analysis/$system/SOURCE` if that file exists,
-else `legacy/$system`. When the file exists, pass `sourceDir: "<that line>"` to the
-workflow below; when it does not, omit it.
+The code is `legacy/$system`, often a symlink to where it really lives: say where it points (`readlink legacy/$system`) in one line before you start.
 
 ## Method A — Workflow (preferred when the Workflow tool is available)
 
@@ -57,7 +55,6 @@ Workflow({
   scriptPath: "${CLAUDE_PLUGIN_ROOT}/workflows/extract-rules.js",
   args: {
     system: "$system",
-    sourceDir: "<first line of SOURCE, only if that file exists>",
     modules: <contents of analysis/$system/extract-rules.modules.json>,   // omit in lens mode
     modulePattern: "$module_pattern"                                     // lens mode only
   }
@@ -107,12 +104,12 @@ Then go to **Finish**. Without the Workflow tool, use Method B.
 Spawn **three business-rules-extractor subagents in parallel**, one lens each (add "focusing
 on files matching $module_pattern" if a pattern was given):
 
-1. **Calculations** — "Find every formula, rate, threshold and computed value in $source: what
+1. **Calculations** — "Find every formula, rate, threshold and computed value in legacy/$system: what
    it computes, the inputs, the exact formula, where (file:line), the edge cases handled."
 2. **Validations and eligibility** — "Find every validation, eligibility check and guard in
-   $source: what is checked, what happens on pass and fail, where (file:line)."
+   legacy/$system: what is checked, what happens on pass and fail, where (file:line)."
 3. **State and lifecycle** — "Find every status field, state machine and lifecycle transition
-   in $source: the states, what triggers transitions, what side effects fire."
+   in legacy/$system: the states, what triggers transitions, what side effects fire."
 
 Merge and de-duplicate, then **verify before you write**: read each cited line and confirm the
 code implements the rule; drop (and note) any rule supported only by a comment or string.
@@ -124,7 +121,7 @@ them, location) in this format:
 ### RULE-NNN: <plain-English name>
 **Category:** Calculation | Validation | Lifecycle | Policy
 **Priority:** P0 | P1 | P2
-**Source:** `path/to/file.ext:line-line`   (path relative to $source)
+**Source:** `path/to/file.ext:line-line`   (path relative to legacy/$system)
 **Plain English:** One sentence a business analyst would recognize.
 **Specification:**
   Given <precondition>
@@ -147,5 +144,4 @@ confirmation** section listing each Medium and Low rule with its question.
 
 Report: total rules, breakdown by category, how many need SME review, and (Method A) how many
 candidates the referees rejected: that number is the quality the verification bought. Refresh the
-report: `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/build_report.py" $system` (skip quietly if `python3`
-is missing). The next step is `/code-modernization:modernize-brief $system <target-stack>`.
+report: `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/build_report.py" $system` (a convenience: if it fails or `python3` is missing, say so in one line and carry on). The next step is `/code-modernization:modernize-brief $system <target-stack>`.

@@ -1,0 +1,352 @@
+#!/usr/bin/env python3
+"""Deterministic judge of "does the new system give the same output as the legacy one".
+
+    python3 compare.py <cases.json> [--out EQUIVALENCE.json] [--quiet] [--allow-outside]
+
+The verdict comes from comparing bytes, never from a model's opinion. Input:
+
+    {"system": "carddemo",
+     "legacy": {"label": "COBOL, GnuCOBOL 3.2", "command": "optional free text"},
+     "new":    {"label": "Java 17",             "command": "optional free text"},
+     "cases": [{"id": "C01", "title": "Interest posting, normal account",
+                "legacy": "out/legacy/C01.out", "new": "out/new/C01.out",
+                "mask": [{"bytes": "278-330", "why": "run timestamp"},
+                         {"regex": "\\d{4}-\\d{2}-\\d{2}[ T]\\d{2}:\\d{2}:\\d{2}"}],
+                "approvedDifference": "optional: why a person accepted a difference",
+                "note": "optional"}]}
+
+Paths are relative to the cases file's folder and may not leave it unless --allow-outside is
+given. `bytes` ranges are 0-based and inclusive; `regex` runs on the bytes decoded as latin-1.
+Every masked span, on both sides, is replaced by one fixed marker, so masks never hide the
+position of a difference and a variable-length match still compares equal. A case is:
+  same      identical after masking
+  differs   different; the first difference is recorded (a person may approve it: differs-approved)
+  missing   a file is absent, unreadable or outside the cases folder. Never a pass.
+
+Writes EQUIVALENCE.json (default: next to the cases file). Exit 0 only when at least one case
+executed, none is missing or differs (approved differences are allowed), the self-check did not
+fail and some compared output was not empty; 1 otherwise; 2 for unusable input.
+"""
+import argparse
+import bisect
+import datetime
+import hashlib
+import json
+import os
+import re
+import sys
+import tempfile
+
+MARK = b"\x00<MASK>\x00"
+MAX_BYTES = 256 * 1024 * 1024
+
+
+class InputError(Exception):
+    pass
+
+
+def clip(value, limit):
+    return value[:limit] if isinstance(value, str) else ""
+
+
+def parse_masks(specs, cid):
+    """[{"bytes": "0-3,10"} | {"regex": "..."}] -> [(kind, ranges-or-pattern, label)]."""
+    masks = []
+    for spec in specs if isinstance(specs, list) else []:
+        if not isinstance(spec, dict) or ("bytes" in spec) == ("regex" in spec):
+            raise InputError("case %s: each mask needs exactly one of 'bytes' or 'regex'" % cid)
+        why = " (%s)" % clip(spec.get("why"), 120) if spec.get("why") else ""
+        if "bytes" in spec:
+            ranges = []
+            for part in str(spec["bytes"]).split(","):
+                m = re.fullmatch(r"\s*(\d+)\s*(?:-\s*(\d+))?\s*", part)
+                if not m or (m.group(2) and int(m.group(2)) < int(m.group(1))):
+                    raise InputError("case %s: bad byte range %r" % (cid, part))
+                ranges.append((int(m.group(1)), int(m.group(2) or m.group(1))))
+            masks.append(("bytes", ranges, "bytes %s%s" % (spec["bytes"], why)))
+        else:
+            try:
+                masks.append(("regex", re.compile(str(spec["regex"])), "regex %s%s" % (clip(str(spec["regex"]), 120), why)))
+            except re.error as err:
+                raise InputError("case %s: bad regex %r: %s" % (cid, spec["regex"], err))
+    return masks
+
+
+def mask_spans(data, masks):
+    """Merged (start, end) spans of `data` that the masks hide."""
+    spans, text = [], None
+    for kind, spec, _ in masks:
+        if kind == "bytes":
+            spans += [(s, min(e + 1, len(data))) for s, e in spec if s < len(data)]
+        else:
+            text = data.decode("latin-1") if text is None else text
+            spans += [m.span() for m in spec.finditer(text) if m.end() > m.start()]
+    merged = []
+    for s, e in sorted(spans):
+        if merged and s <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(e, merged[-1][1]))
+        else:
+            merged.append((s, e))
+    return merged
+
+
+def apply_masks(data, masks):
+    """-> (masked bytes, cuts, hidden byte count); cuts map masked offsets back to file offsets."""
+    out, pos, cuts, hidden, at = [], 0, [], 0, 0
+    for s, e in mask_spans(data, masks):
+        out.append(data[pos:s])
+        at += s - pos
+        cuts.append((at, s, e))
+        out.append(MARK)
+        at += len(MARK)
+        hidden += e - s
+        pos = e
+    out.append(data[pos:])
+    return b"".join(out), cuts, hidden
+
+
+def original_offset(cuts, masked_offset):
+    shift = 0
+    for at, s, e in cuts:
+        if masked_offset < at:
+            break
+        if masked_offset < at + len(MARK):
+            return s
+        shift += (e - s) - len(MARK)
+    return masked_offset + shift
+
+
+def first_diff(a, b):
+    n, step, i = min(len(a), len(b)), 1 << 16, 0
+    while i < n:
+        j = min(i + step, n)
+        if a[i:j] != b[i:j]:
+            return next(k for k in range(i, j) if a[k] != b[k])
+        i = j
+    return n if len(a) != len(b) else None
+
+
+def escape(chunk):
+    out = []
+    for byte in chunk:
+        if byte == 0x5C:
+            out.append("\\\\")
+        elif 0x20 <= byte < 0x7F:
+            out.append(chr(byte))
+        else:
+            out.append({10: "\\n", 13: "\\r", 9: "\\t"}.get(byte, "\\x%02x" % byte))
+    return "".join(out).replace("\\x00<MASK>\\x00", "[masked]")
+
+
+def context(masked, off):
+    before = escape(masked[max(0, off - 12):off])[-12:]
+    after = escape(masked[off:off + 28])[:28] if off < len(masked) else "<end of output>"
+    return before + after, len(before)
+
+
+def read_file(rel, base, allow_outside):
+    """-> (bytes, None) or (None, plain-English problem)."""
+    if not isinstance(rel, str) or not rel:
+        return None, "no path was given"
+    path = os.path.join(base, rel)
+    try:
+        real, root = os.path.realpath(path), os.path.realpath(base)
+        if not allow_outside and os.path.commonpath([root, real]) != root:
+            return None, "the path leaves the cases folder (pass --allow-outside if that is intended)"
+        if not os.path.exists(path):
+            return None, "the file does not exist"
+        if os.path.getsize(path) > MAX_BYTES:
+            return None, "the file is larger than %d MB" % (MAX_BYTES >> 20)
+        with open(path, "rb") as fh:
+            return fh.read(), None
+    except (OSError, ValueError) as err:
+        return None, "the file could not be read (%s)" % err.__class__.__name__
+
+
+def rel_to(path, folder):
+    try:
+        return os.path.relpath(path, folder).replace(os.sep, "/")
+    except ValueError:
+        return path
+
+
+def judge(case, index, base, out_dir, allow_outside):
+    """-> (case record, legacy bytes or None, masks)."""
+    cid = clip(str(case.get("id") or "C%02d" % (index + 1)), 80)
+    masks = parse_masks(case.get("mask"), cid)
+    rec = {"id": cid, "title": clip(case.get("title"), 300), "verdict": "missing", "reason": "",
+           "legacyPath": "", "newPath": "", "legacySha256": "", "newSha256": "",
+           "masked": [m[2] for m in masks], "approvedDifference": clip(case.get("approvedDifference"), 500),
+           "note": clip(case.get("note"), 500)}
+    data, problems = {}, []
+    for side in ("legacy", "new"):
+        given = case.get(side)
+        rec[side + "Path"] = rel_to(os.path.join(base, given), out_dir) if isinstance(given, str) and given else ""
+        data[side], why = read_file(given, base, allow_outside)
+        if why:
+            problems.append("The %s output was not compared: %s (%s)." % (side, why, clip(str(given), 200)))
+    if problems:
+        rec["reason"] = " ".join(problems)
+        return rec, None, masks
+    legacy, new = data["legacy"], data["new"]
+    rec["legacySha256"], rec["newSha256"] = hashlib.sha256(legacy).hexdigest(), hashlib.sha256(new).hexdigest()
+    a, cuts, hid_a = apply_masks(legacy, masks)
+    b, _, hid_b = apply_masks(new, masks)
+    rec["bytes"], rec["maskedBytes"] = {"legacy": len(legacy), "new": len(new)}, {"legacy": hid_a, "new": hid_b}
+    rec["empty"] = not legacy and not new
+    at = first_diff(a, b)
+    if at is None:
+        rec["verdict"] = "same"
+        rec["reason"] = ("Both outputs are empty, so nothing was compared." if rec["empty"] else
+                         "Identical after masking: %d of %d bytes were hidden by %d mask(s)." % (hid_a, len(legacy), len(masks)) if masks else
+                         "Identical, %d bytes." % len(legacy))
+        return rec, legacy, masks
+    seen, seen_at = context(a, at)
+    got, _ = context(b, at)
+    line = a.count(b"\n", 0, at) + 1
+    rec["firstDiff"] = {"offset": original_offset(cuts, at), "line": line, "legacy": seen, "new": got, "at": seen_at}
+    where = "line %d, byte %d" % (line, rec["firstDiff"]["offset"])
+    if at >= len(a) or at >= len(b):
+        rec["reason"] = "The %s output ends at %s while the %s output continues." % (
+            "legacy" if at >= len(a) else "new", where, "new" if at >= len(a) else "legacy")
+    else:
+        rec["reason"] = "The outputs first differ at %s." % where
+    if rec["approvedDifference"].strip():
+        rec["verdict"] = "differs-approved"
+        rec["reason"] += " A person approved this difference: %s" % clip(rec["approvedDifference"], 200)
+    else:
+        rec["verdict"] = "differs"
+    return rec, legacy, masks
+
+
+def self_check(items):
+    """Prove the comparator can fail: change one unmasked byte of each legacy output; it must differ."""
+    tested = 0
+    for cid, data, masks in items:
+        if not data:
+            continue
+        tested += 1
+        base, _, _ = apply_masks(data, masks)
+        free, pos = [], 0
+        for s, e in mask_spans(data, masks) + [(len(data), len(data))]:
+            if s > pos:
+                free.append((pos, s))
+            pos = e
+        if not free:
+            return False, "case %s: the masks hide every byte, so no difference could ever be seen" % cid
+        biggest = max(free, key=lambda f: f[1] - f[0])
+        for p in (free[0][0], free[-1][1] - 1, (biggest[0] + biggest[1]) // 2):
+            changed = data[:p] + bytes([data[p] ^ 1]) + data[p + 1:]
+            if apply_masks(changed, masks)[0] != base:
+                break
+        else:
+            return False, "case %s: a one-byte change to the legacy output was not reported as different" % cid
+    if not tested:
+        return None, "not applicable: no executed case had bytes to test"
+    return True, "each legacy output was compared with a copy changed by one byte and reported as different"
+
+
+def run(cases_path, out_path=None, allow_outside=False):
+    """-> the EQUIVALENCE record. Raises InputError for a cases file that cannot be used."""
+    try:
+        with open(cases_path, "rb") as fh:
+            spec = json.loads(fh.read().decode("utf-8-sig"))
+    except (OSError, ValueError) as err:
+        raise InputError("cannot read %s: %s" % (cases_path, err))
+    if not isinstance(spec, dict) or not isinstance(spec.get("cases"), list):
+        raise InputError("%s must be a JSON object with a 'cases' list" % cases_path)
+    base = os.path.dirname(os.path.abspath(cases_path))
+    out_dir = os.path.dirname(os.path.abspath(out_path)) if out_path else base
+    records, items, ids = [], [], set()
+    for i, case in enumerate(spec["cases"]):
+        if not isinstance(case, dict):
+            raise InputError("case %d is not an object" % (i + 1))
+        rec, data, masks = judge(case, i, base, out_dir, allow_outside)
+        if rec["id"] in ids:
+            raise InputError("duplicate case id %r" % rec["id"])
+        ids.add(rec["id"])
+        records.append(rec)
+        if data is not None:
+            items.append((rec["id"], data, masks))
+    passed, detail = self_check(items)
+    count = lambda v: sum(1 for r in records if r["verdict"] == v)
+    ends = lambda key: {k: clip(spec.get(key, {}).get(k), 300) for k in ("label", "command")} if isinstance(spec.get(key), dict) else {"label": "", "command": ""}
+    return {"system": clip(spec.get("system"), 200), "generated": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "legacy": ends("legacy"), "new": ends("new"), "selfCheck": {"passed": passed, "detail": detail},
+            "totals": {"cases": len(records), "executed": len(items), "same": count("same"), "differs": count("differs"),
+                       "differsApproved": count("differs-approved"), "missing": count("missing")},
+            "cases": records}
+
+
+def verdict_of(result):
+    """-> None when proven, else the reason it is not."""
+    t = result["totals"]
+    if t["executed"] == 0:
+        return "no case executed"
+    if t["missing"] or t["differs"]:
+        return " and ".join(filter(None, ["%d case(s) differ" % t["differs"] if t["differs"] else "",
+                                         "%d case(s) are missing" % t["missing"] if t["missing"] else ""]))
+    if result["selfCheck"]["passed"] is False:
+        return "the self-check failed: " + result["selfCheck"]["detail"]
+    if all(r.get("empty") for r in result["cases"] if r["verdict"] != "missing"):
+        return "every compared output was empty"
+    return None
+
+
+def write_atomic(path, text):
+    path = os.path.abspath(path)
+    folder = os.path.dirname(path)
+    for p in (path, folder):
+        if os.path.islink(p):
+            raise InputError("refusing to write through a symbolic link: %s" % p)
+    os.makedirs(folder, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=folder, prefix=".equivalence-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(text.encode("utf-8"))
+        umask = os.umask(0)
+        os.umask(umask)
+        os.chmod(tmp, 0o666 & ~umask)
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.lexists(tmp):
+            os.unlink(tmp)
+        raise
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description="Compare legacy and new outputs byte for byte.")
+    ap.add_argument("cases", help="cases.json (see the module docstring for the schema)")
+    ap.add_argument("--out", help="where to write EQUIVALENCE.json (default: next to the cases file)")
+    ap.add_argument("--quiet", action="store_true", help="write the file, print nothing")
+    ap.add_argument("--allow-outside", action="store_true", help="allow case paths that leave the cases folder")
+    args = ap.parse_args(argv)
+    out = args.out or os.path.join(os.path.dirname(os.path.abspath(args.cases)), "EQUIVALENCE.json")
+    try:
+        result = run(args.cases, out, args.allow_outside)
+    except InputError as err:
+        print("compare.py: %s" % err, file=sys.stderr)
+        return 2
+    try:
+        write_atomic(out, json.dumps(result, indent=2, ensure_ascii=True) + "\n")
+    except InputError as err:
+        print("compare.py: %s" % err, file=sys.stderr)
+        return 2
+    problem = verdict_of(result)
+    if not args.quiet:
+        t, plain = result["totals"], lambda s: re.sub(r"[\x00-\x1f\x7f-\x9f]", "?", s)
+        print("equivalence cases executed: %d" % t["executed"])
+        print("same %d | differs %d | differs but approved %d | missing %d | of %d cases" %
+              (t["same"], t["differs"], t["differsApproved"], t["missing"], t["cases"]))
+        sc = result["selfCheck"]
+        print("self-check: %s - %s" % ({True: "passed", False: "FAILED", None: "not applicable"}[sc["passed"]], plain(sc["detail"])))
+        for r in result["cases"]:
+            if r["verdict"] != "same":
+                print("  %s  %s: %s" % (plain(r["id"]), r["verdict"], plain(r["reason"])[:200]))
+        print(("NOT PROVEN: %s" % problem) if problem else "PROVEN: %d case(s) executed, none differ" % t["executed"])
+        print("wrote %s" % out)
+    return 1 if problem else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

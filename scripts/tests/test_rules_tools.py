@@ -44,11 +44,13 @@ class ShardTests(unittest.TestCase):
             self.assertNotIn('tests/t.pl', json.dumps(shards))
             self.assertTrue(all(not f.startswith('legacy/') for s in shards for f in s['files']))
 
-    def test_source_marker_moves_the_tree_and_files_stay_relative_to_it(self):
+    def test_a_symlinked_source_is_followed_and_files_stay_relative_to_it(self):
         with tempfile.TemporaryDirectory() as ws, tempfile.TemporaryDirectory() as elsewhere:
             write(elsewhere, 'src/a.cbl', 'a\n' * 50)
-            write(ws, 'analysis/big/SOURCE', elsewhere + '\n')
-            self.assertEqual(run('make_shards.py', 'big', '--workspace', ws).returncode, 0)
+            os.makedirs(os.path.join(ws, 'legacy'))
+            os.symlink(elsewhere, os.path.join(ws, 'legacy', 'big'))
+            done = run('make_shards.py', 'big', '--workspace', ws)
+            self.assertEqual(done.returncode, 0, done.stderr)
             shards = load(os.path.join(ws, 'analysis/big/extract-rules.modules.json'))
             self.assertEqual(shards[0]['files'], ['src/a.cbl'])
 
@@ -66,6 +68,59 @@ class ShardTests(unittest.TestCase):
             self.assertEqual([s['files'] for s in shards], [['A.cbl', 'B.cbl'], ['C.cbl']])
             self.assertEqual(run('make_shards.py', 's', 'C*', '--workspace', ws).returncode, 0)
             self.assertEqual(run('make_shards.py', 's', 'nothing*', '--workspace', ws).returncode, 1)
+
+    def test_links_and_paths_that_leave_the_source_are_not_shards(self):
+        with tempfile.TemporaryDirectory() as ws, tempfile.TemporaryDirectory() as outside:
+            write(ws, 'legacy/s/ok.pl', 'a\n' * 5)
+            write(outside, 'secret.pl', 'not part of the system\n')
+            os.symlink(os.path.join(outside, 'secret.pl'), os.path.join(ws, 'legacy/s/link.pl'))
+            self.assertEqual(run('make_shards.py', 's', '--workspace', ws).returncode, 0)
+            shards = load(os.path.join(ws, 'analysis/s/extract-rules.modules.json'))
+            self.assertEqual([f for s in shards for f in s['files']], ['ok.pl'])
+            topology = {'root': {'kind': 'system', 'id': 'sys', 'children': [{'kind': 'domain', 'name': 'D', 'id': 'd', 'children': [
+                {'kind': 'module', 'id': 'A', 'name': 'A', 'file': 'ok.pl', 'loc': 500},
+                {'kind': 'module', 'id': 'B', 'name': 'B', 'file': '../../../etc/hosts', 'loc': 500},
+                {'kind': 'module', 'id': 'C', 'name': 'C', 'file': 'link.pl', 'loc': 500}]}]}}
+            write(ws, 'analysis/s/topology.json', json.dumps(topology))
+            done = run('make_shards.py', 's', '--workspace', ws)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            shards = load(os.path.join(ws, 'analysis/s/extract-rules.modules.json'))
+            self.assertEqual([f for s in shards for f in s['files']], ['ok.pl'])
+            self.assertIn('outside the source directory', done.stdout)
+
+    def test_a_link_to_the_home_directory_or_root_is_refused(self):
+        with tempfile.TemporaryDirectory() as ws:
+            os.makedirs(os.path.join(ws, 'legacy'))
+            for broad in (os.path.expanduser('~'), '/', '/usr'):
+                link = os.path.join(ws, 'legacy', 's')
+                if os.path.islink(link):
+                    os.unlink(link)
+                os.symlink(broad, link)
+                done = run('make_shards.py', 's', '--workspace', ws)
+                self.assertEqual(done.returncode, 1, broad)
+                self.assertIn('too broad', done.stderr)
+
+    def test_a_plain_name_matches_what_lies_beneath_it(self):
+        with tempfile.TemporaryDirectory() as ws:
+            write(ws, 'legacy/s/jetty-util/src/A.java', 'a\n' * 5)
+            write(ws, 'legacy/s/jetty-util-ajax/src/B.java', 'a\n' * 5)
+            write(ws, 'legacy/s/other/C.java', 'a\n' * 5)
+            self.assertEqual(run('make_shards.py', 's', 'jetty-util', '--workspace', ws).returncode, 0)
+            shards = load(os.path.join(ws, 'analysis/s/extract-rules.modules.json'))
+            self.assertEqual([f for sh in shards for f in sh['files']], ['jetty-util/src/A.java'])
+
+    def test_a_map_whose_modules_share_one_directory_falls_back_to_the_tree(self):
+        with tempfile.TemporaryDirectory() as ws:
+            for name in ('a', 'b'):
+                write(ws, f'legacy/s/pkg/{name}/X.java', 'a\n' * 50)
+            children = [{'kind': 'module', 'id': f'pkg/{n}', 'name': f'pkg/{n}', 'file': 'pkg', 'loc': 900} for n in ('a', 'b')]
+            topology = {'root': {'kind': 'system', 'id': 'sys', 'children': [{'kind': 'domain', 'name': 'D', 'id': 'd', 'children': children}]}}
+            write(ws, 'analysis/s/topology.json', json.dumps(topology))
+            done = run('make_shards.py', 's', '--workspace', ws)
+            self.assertEqual(done.returncode, 0, done.stderr)
+            self.assertIn('cannot be sharded by module', done.stdout)
+            shards = load(os.path.join(ws, 'analysis/s/extract-rules.modules.json'))
+            self.assertEqual(sorted(f for sh in shards for f in sh['files']), ['pkg/a/X.java', 'pkg/b/X.java'])
 
     def test_missing_source_says_what_to_do(self):
         with tempfile.TemporaryDirectory() as ws:

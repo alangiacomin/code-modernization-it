@@ -394,6 +394,11 @@ export function register(on: On, raw: PluginOptions) {
 
     const legacyRoot = join(state.options.legacyDir, snapshot.system)
     const written = norm(citation.path)
+
+    // A citation comes from a file in the analysis tree: it names a file inside the code, never a way out of it.
+    if (written.startsWith('/') || /^[A-Za-z]:/.test(written) || written.split('/').includes('..')) {
+      return
+    }
     const viaMap = snapshot.topology !== null ? nodeOfFile(snapshot.topology, written)?.file : undefined
 
     const candidates = [

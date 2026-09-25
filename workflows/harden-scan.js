@@ -21,8 +21,9 @@ if (!system) {
   throw new Error('modernize-harden-scan workflow requires args: {system: "<system-dir>"}')
 }
 if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(system)) {
-  throw new Error(`Unsafe system name ${JSON.stringify(system)} — must be a plain directory name under legacy/`)
+  throw new Error(`Unsafe system name ${JSON.stringify(system)} — must be a plain name: letters, digits, hyphen and underscore`)
 }
+// The code is `legacy/<system>`: a copy, or a symlink to where it really lives (`preflight --source` makes the link).
 const legacyDir = `legacy/${system}`
 
 // Finder output is derived from untrusted code — when it flows into a judge

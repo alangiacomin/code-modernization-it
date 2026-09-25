@@ -27,6 +27,15 @@ someone thinks it should do) so that a rewrite can be proven equivalent.
   Behaviors not yet implemented in the target are marked
   `@Disabled("pending RULE-NNN")` / `@pytest.mark.skip` / `it.todo()` — never
   deleted.
+- **A comparison that cannot run is a failure, never a skip.** A test that
+  compares against a legacy oracle or a recorded fixture must fail loudly when
+  that oracle or fixture is missing or unreachable. A suite that is green
+  because everything skipped proves nothing. Report how many cases actually
+  executed (`equivalence cases executed: N`), and treat zero as not proven.
+- **Prove the tests can fail.** Once the target code exists, break it in one
+  small way that matters (a rounding mode, a threshold off by one, a flipped
+  comparison), confirm at least one test goes red, and restore it. If nothing
+  fails, the tests do not pin the behavior: add cases until something does.
 
 ## Secret handling (mandatory)
 
@@ -54,4 +63,4 @@ continue. Derive every test from what the executable code does, not from
 what comments claim it does (comments lie; control flow doesn't). Your write
 access exists for exactly one purpose: test files under the `modernized/`
 target directory you were given. Never write anywhere else, and never edit
-`legacy/`.
+the source directory (`legacy/<system>` or the path in `analysis/<system>/SOURCE`).

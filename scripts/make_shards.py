@@ -3,8 +3,7 @@
 
     python3 make_shards.py <system> [module-pattern] [--workspace DIR] [--all]
 
-The source directory is the first line of analysis/<system>/SOURCE when that file
-exists, else legacy/<system>. With analysis/<system>/topology.json, one shard per map
+The source directory is legacy/<system> (a copy, or a symlink to where the code lives). With analysis/<system>/topology.json, one shard per map
 module (small modules of a domain merged); without it, one shard per directory of source
 files. The list is written to analysis/<system>/extract-rules.modules.json as
 [{"name", "domain", "files": [relative to the source dir], "loc"}], the form the
@@ -38,13 +37,16 @@ TINY_ESTATE = 30
 MAX_BYTES = 5_000_000
 
 
+def too_broad(path):
+    """The filesystem root, the home directory or one of its parents, or a top-level system directory: never a system's code."""
+    real = os.path.realpath(path)
+    home = os.path.realpath(os.path.expanduser('~'))
+    parts = [p for p in real.split(os.sep) if p]
+    return real == os.sep or len(parts) < 2 or home == real or home.startswith(real + os.sep)
+
+
 def source_dir(workspace, system):
-    marker = os.path.join(workspace, 'analysis', system, 'SOURCE')
-    if os.path.isfile(marker):
-        with open(marker, encoding='utf-8', errors='replace') as handle:
-            first = handle.readline().strip()
-        if first:
-            return first if os.path.isabs(first) else os.path.join(workspace, first)
+    """The code is legacy/<system>: a copy, or a symlink to where it really lives."""
     return os.path.join(workspace, 'legacy', system)
 
 
@@ -61,6 +63,29 @@ def count_lines(path):
     return data.count(b'\n') + (1 if data and not data.endswith(b'\n') else 0)
 
 
+def matcher(pattern):
+    """A glob matches a name or a path (or its file name); a plain name such as `jetty-util` also matches what lies beneath it."""
+    plain_name = not any(ch in pattern for ch in '*?[')
+    wanted = pattern.strip('/')
+
+    def match(text):
+        if fnmatch.fnmatch(text, pattern) or fnmatch.fnmatch(os.path.basename(text), pattern):
+            return True
+        if plain_name:
+            padded = '/' + text.strip('/') + '/'
+            return padded.startswith('/' + wanted + '/') or ('/' + wanted + '/') in padded
+        return False
+
+    return match
+
+
+def contained(source, rel):
+    """True when `rel` under the source directory really resolves inside it (no `..`, no symlink out)."""
+    root = os.path.realpath(source)
+    real = os.path.realpath(os.path.join(source, rel))
+    return real == root or real.startswith(root + os.sep)
+
+
 def relative_to_source(path, source, system):
     """A topology `file` may be absolute, workspace-relative or source-relative: return it source-relative."""
     path = path.replace('\\', '/')
@@ -73,8 +98,20 @@ def relative_to_source(path, source, system):
     return path
 
 
+def shared_locations(modules, source):
+    """Locations several map modules share, or that are directories: modules without files of their own cannot be sharded."""
+    seen, shared = {}, []
+    for module in modules:
+        for rel in module['files']:
+            seen.setdefault(rel, []).append(module['name'])
+    for rel, owners in seen.items():
+        if len(owners) > 1 or os.path.isdir(os.path.join(source, rel)):
+            shared.append((rel, len(owners)))
+    return shared
+
+
 def from_topology(topology, source, system, pattern):
-    modules, names = [], set()
+    modules, names, escaped = [], set(), []
 
     def walk(node, domain):
         kind = node.get('kind')
@@ -82,7 +119,9 @@ def from_topology(topology, source, system, pattern):
             domain = node.get('name') or node.get('id', '')
         if kind == 'module' and node.get('file'):
             rel = relative_to_source(str(node['file']), source, system)
-            if rel:
+            if rel and not contained(source, rel):
+                escaped.append(rel)
+            elif rel:
                 name = str(node.get('name') or node.get('id'))
                 if name in names:
                     name = str(node.get('id') or name)  # names can repeat across domains; ids are unique
@@ -92,9 +131,12 @@ def from_topology(topology, source, system, pattern):
             walk(child, domain)
 
     walk(topology['root'], '')
+    total = len(modules)
+    unusable = shared_locations(modules, source)
+    if unusable:
+        raise ValueError('%d map module(s) share a location or name a directory instead of a file (first: %s)' % (len(unusable), unusable[0][0]))
     if pattern:
-        def match(text):
-            return fnmatch.fnmatch(text, pattern) or fnmatch.fnmatch(os.path.basename(text), pattern)
+        match = matcher(pattern)
         modules = [m for m in modules if match(m['name']) or any(match(f) for f in m['files'])]
     # merge small modules of the same domain; never split one
     shards, pool, counter = [], {}, {}
@@ -112,11 +154,11 @@ def from_topology(topology, source, system, pattern):
             current['loc'] += module['loc']
         else:
             shards.append(module)
-    return shards, len(modules)
+    return shards, len(modules), escaped, total
 
 
 def from_tree(source, pattern, include_all):
-    by_dir, skipped = {}, {'vendored or generated': 0, 'tests': 0, 'unreadable or binary': 0}
+    by_dir, skipped = {}, {'vendored or generated': 0, 'tests': 0, 'unreadable or binary': 0, 'symbolic links': 0}
     for root, dirs, files in os.walk(source):
         kept = []
         for d in sorted(dirs):
@@ -131,15 +173,18 @@ def from_tree(source, pattern, include_all):
             if os.path.splitext(name)[1].lower() not in SOURCE_EXT or name.endswith('.min.js'):
                 continue
             path = os.path.join(root, name)
+            if os.path.islink(path):
+                skipped['symbolic links'] += 1  # a link can point outside the source directory
+                continue
             lines = count_lines(path)
             if lines is None:
                 skipped['unreadable or binary'] += 1
                 continue
             rel = os.path.relpath(path, source).replace(os.sep, '/')
             by_dir.setdefault(os.path.dirname(rel), []).append((rel, lines))
+    whole = sum(len(fs) for fs in by_dir.values())
     if pattern:
-        def match(text):
-            return fnmatch.fnmatch(text, pattern) or fnmatch.fnmatch(os.path.basename(text), pattern)
+        match = matcher(pattern)
         by_dir = {d: [f for f in fs if match(f[0])] for d, fs in by_dir.items()}
     shards, total = [], 0
     for directory in sorted(by_dir):
@@ -157,7 +202,7 @@ def from_tree(source, pattern, include_all):
             if rel is not None:
                 chunk.append((rel, lines))
                 chunk_loc += lines
-    return shards, total, skipped
+    return shards, total, skipped, whole
 
 
 def main(argv):
@@ -172,8 +217,13 @@ def main(argv):
         return 2
     system, pattern = args[0], (args[1] if len(args) > 1 else '')
     source = source_dir(workspace, system)
+    print(f'source: {source}')
+    if os.path.isdir(source) and too_broad(source):
+        print(f'{source} is too broad to be one system (the filesystem root, your home directory or a top-level directory). '
+              'Point --source at the directory that holds the code.', file=sys.stderr)
+        return 1
     if not os.path.isdir(source):
-        print(f'No source directory at {source}. Run preflight (with --source <path> if the code is elsewhere) first.', file=sys.stderr)
+        print(f'No code at {source}. Run preflight first (with --source <path> if the code lives elsewhere).', file=sys.stderr)
         return 1
     out = os.path.join(workspace, 'analysis', system, 'extract-rules.modules.json')
     topo_path = os.path.join(workspace, 'analysis', system, 'topology.json')
@@ -182,17 +232,19 @@ def main(argv):
         try:
             with open(topo_path, encoding='utf-8') as handle:
                 topology = json.load(handle)
-            shards, modules = from_topology(topology, source, system, pattern)
+            shards, modules, escaped, whole = from_topology(topology, source, system, pattern)
             origin = f'{modules} map modules'
+            if escaped:
+                notes.append(f'{len(escaped)} map file(s) resolve outside the source directory and were left out (first: {escaped[0]})')
             missing = [f for s in shards for f in s['files'] if not os.path.exists(os.path.join(source, f))]
             if missing:
                 notes.append(f'{len(missing)} file(s) named by the map do not exist under the source directory (first: {missing[0]})')
         except (ValueError, KeyError, OSError) as error:
-            print(f'topology.json is unusable ({error}); reading the directory tree instead.', file=sys.stderr)
-            shards, files, skipped = from_tree(source, pattern, '--all' in flags)
+            print(f'note: the map cannot be sharded by module ({error}); reading the directory tree instead.')
+            shards, files, skipped, whole = from_tree(source, pattern, '--all' in flags)
             origin = f'{files} source files (tree)'
     else:
-        shards, files, skipped = from_tree(source, pattern, '--all' in flags)
+        shards, files, skipped, whole = from_tree(source, pattern, '--all' in flags)
         origin = f'{files} source files (no topology.json: read from the directory tree)'
         left_out = ', '.join(f'{n} {k}' for k, n in skipped.items() if n)
         if left_out:
@@ -208,8 +260,8 @@ def main(argv):
     file_count = sum(len(s['files']) for s in shards)
     loc = sum(s['loc'] or 0 for s in shards)
     print(f'{len(shards)} shards from {origin}, {file_count} files, {loc} lines -> {os.path.relpath(out, workspace)}')
-    if file_count < TINY_ESTATE:
-        print(f'tiny estate: fewer than {TINY_ESTATE} source files, so sharding adds little (run the workflow in lens mode).')
+    if whole < TINY_ESTATE:
+        print(f'tiny estate: the system has fewer than {TINY_ESTATE} source files, so sharding adds little (run the workflow in lens mode).')
     for note in notes:
         print(f'note: {note}')
     return 0
