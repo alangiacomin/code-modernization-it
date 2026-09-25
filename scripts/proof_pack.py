@@ -56,13 +56,15 @@ sys.path.insert(0, HERE)
 import baseline_diff  # noqa: E402
 import compare  # noqa: E402
 import trace_rules  # noqa: E402
+import uplift_checks  # noqa: E402
 
 FRESH_MIN, LIST_CAP, JSON_CAP = 10, 40, 8 << 20
 VERDICTS = ("PROVEN", "PARTLY PROVEN", "NOT PROVEN")
+UPLIFT_CHECKS = (("baseline", "Baseline measured"), ("kept", "Tests kept"), ("deltas", "Deltas covered"))
 CHECKS = (("tests", "Tests ran"), ("rules", "Rules traced"), ("same", "Same behavior"), ("fresh", "Fresh inputs"),
-          ("canary", "Canary"), ("source", "Source untouched"))
+          ("canary", "Canary"), ("source", "Source untouched")) + UPLIFT_CHECKS
 RULES_TEXT = (
-    "PROVEN needs all six checks to pass. NOT PROVEN when any check fails. PARTLY PROVEN when nothing failed but a check could not pass.",
+    "PROVEN needs every check to pass: the six below, and for an uplift three more (7 to 9). NOT PROVEN when any check fails. PARTLY PROVEN when nothing failed but a check could not pass.",
     "1. Tests ran: at least one test executed in a fresh run, none failed, none was skipped without a reason, and every result file is newer than the code. "
     "The counts must be read by this script from result files or a saved raw runner log; counts only typed in cannot reach PROVEN.",
     "2. Rules traced (rewrite and reimagine): every P0 rule the module answers for is named by at least one test. A rule that only the notes name is claimed, not tested.",
@@ -72,6 +74,11 @@ RULES_TEXT = (
     "when it could not, the proof is trace-based and the best verdict is PARTLY PROVEN.",
     "5. Canary: a deliberate one-line break whose own result file or saved runner log shows failing tests. A line in the notes is a claim.",
     "6. Source untouched: no file under legacy/<system> is newer than the analysis (PREFLIGHT.md), by a plain file walk; no version-control tool is run.",
+    "7. Baseline measured (uplift): the old version's numbers in BASELINE.md come from per-test result files, a per-test results file or a raw runner log that this script parsed "
+    "(in analysis/<system>/baseline/, or on a Recorded: or Machine-readable: line of BASELINE.md), and the typed table agrees with them. A table typed by hand, or sources that disagree, cannot reach PROVEN.",
+    "8. Tests kept (uplift): no test file of the untouched legacy tree is missing from the working copy, no more than 25% of them changed, and the legacy tree has test files to compare against "
+    "(walked by file, no process is run). The list is for a person to review; weakened assertions cannot be detected, only that files changed.",
+    "9. Deltas covered (uplift): every Behavioral-silent delta in DELTA_CATALOG.md has its site's file named, as a whole word, by some test file of the working copy. A name is not proof that the test exercises the change.",
     "Open questions, unticked criteria and the sign-off are for a person. They never change the verdict.",
 )
 WORDS = {"pass": "pass", "gap": "not proven", "fail": "FAIL", "na": "not applicable"}
@@ -190,122 +197,8 @@ def code_mtime(root):
     return newest
 
 
-# ---------------------------------------------------------------- raw runner logs
-LOG_CAP, LOG_LINE = 16 << 20, 2000
-NUM_WORD = re.compile(r"(\d+)\s+([A-Za-z]+)")
-
-
-def words(text):
-    """{'passed': 10, 'failed': 2} from '2 failed, 10 passed' style text."""
-    out = {}
-    for n, w in NUM_WORD.findall(text[:LOG_LINE]):
-        out[w.lower()] = out.get(w.lower(), 0) + int(n)
-    return out
-
-
-def _maven(m):
-    run, f, e, sk = (int(g) for g in m.groups())
-    return max(0, run - f - e - sk), f + e, sk
-
-
-def _pytest(m):
-    w = words(m.group(1))
-    return w.get("passed", 0) + w.get("xpassed", 0) + w.get("xfailed", 0), w.get("failed", 0) + w.get("error", 0) + w.get("errors", 0), w.get("skipped", 0)
-
-
-def _jest(m):
-    w = words(m.group(1))
-    return w.get("passed", 0), w.get("failed", 0), w.get("skipped", 0)
-
-
-def _php(m):
-    w = {k.lower(): int(v) for k, v in re.findall(r"([A-Za-z]+):\s*(\d+)", m.group(1)[:LOG_LINE])}
-    failed, skipped = w.get("failures", 0) + w.get("errors", 0), w.get("skipped", 0) + w.get("incomplete", 0)
-    return max(0, w.get("tests", 0) - failed - skipped), failed, skipped
-
-
-def _ctest(m):
-    failed, total = int(m.group(1)), int(m.group(2))
-    return max(0, total - failed), failed, 0
-
-
-def _gradle(m):
-    total, failed, skipped = int(m.group(1)), int(m.group(2) or 0), int(m.group(3) or 0)
-    return max(0, total - failed - skipped), failed, skipped
-
-
-# runner, a line pattern, and how to read (passed, failed, skipped) from a match. Every pattern is anchored and bounded.
-LOG_LINES = (
-    ("maven", re.compile(r"^(?:\[\w+\]\s*)?Tests run: (\d+), Failures: (\d+), Errors: (\d+), Skipped: (\d+)\s*$"), _maven),
-    ("gradle", re.compile(r"^(\d+) tests? completed(?:, (\d+) failed)?(?:, (\d+) skipped)?\s*$"), _gradle),
-    ("cargo", re.compile(r"^test result: (?:ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored;"), lambda m: (int(m.group(1)), int(m.group(2)), int(m.group(3)))),
-    ("pytest", re.compile(r"^(?:=+ )?((?:\d+ [a-z]+(?:, )?)+) in [\d.]+s(?: \([\d:]+\))?(?: =+)?\s*$"), _pytest),
-    ("pytest", re.compile(r"^(?:=+ )?no tests ran in [\d.]+s"), lambda m: (0, 0, 0)),
-    ("go test", re.compile(r"^\s*--- (PASS|FAIL|SKIP): \S"), lambda m: {"PASS": (1, 0, 0), "FAIL": (0, 1, 0), "SKIP": (0, 0, 1)}[m.group(1)]),
-    ("go test -json", re.compile(r'^\{.*"Action":"(pass|fail|skip)".*"Test":"[^"]+"'), lambda m: {"pass": (1, 0, 0), "fail": (0, 1, 0), "skip": (0, 0, 1)}[m.group(1)]),
-    ("dotnet test", re.compile(r"^(?:Passed|Failed)!\s+-\s+Failed:\s+(\d+),\s+Passed:\s+(\d+),\s+Skipped:\s+(\d+)"), lambda m: (int(m.group(2)), int(m.group(1)), int(m.group(3)))),
-    ("jest", re.compile(r"^\s*Tests:\s+(.*\b\d+ total)\s*$"), _jest),
-    ("vitest", re.compile(r"^\s*Tests\s{2,}(.*)\(\d+\)\s*$"), _jest),
-    ("ctest", re.compile(r"^\d+% tests passed, (\d+) tests? failed out of (\d+)"), _ctest),
-    ("phpunit", re.compile(r"^OK \((\d+) tests?, \d+ assertions?\)"), lambda m: (int(m.group(1)), 0, 0)),
-    ("phpunit", re.compile(r"^(Tests: \d+, Assertions: \d+.*?)\.?\s*$"), _php),
-)
-UNITTEST_RAN = re.compile(r"^Ran (\d+) tests? in [\d.]+s\s*$")
-UNITTEST_END = re.compile(r"^(?:OK|FAILED)(?: \(([^)]*)\))?\s*$")
-
-
-def parse_runner_log(text):
-    """(executed, failed, skipped, runners) from the runner's own summary lines, summed over the log; None when no line is recognised.
-    Recognised: Maven/Gradle, cargo, pytest, unittest, go test (-v or -json), dotnet test, jest, vitest, ctest, phpunit."""
-    passed = failed = skipped = 0
-    seen, ran = [], None
-    for line in text.split("\n")[:3000000]:
-        line = line.rstrip("\r")[:LOG_LINE]
-        if ran is not None and line.strip():
-            m = UNITTEST_END.match(line)
-            if m:
-                w = {k: int(v) for k, v in re.findall(r"(\w+)=(\d+)", (m.group(1) or "")[:LOG_LINE])}
-                f, sk = w.get("failures", 0) + w.get("errors", 0), w.get("skipped", 0)
-                passed, failed, skipped = passed + max(0, ran - f - sk), failed + f, skipped + sk
-                seen.append("unittest")
-            ran = None
-        m = UNITTEST_RAN.match(line)
-        if m:
-            ran = int(m.group(1))
-            continue
-        for name, rx, read in LOG_LINES:
-            m = rx.match(line)
-            if m:
-                p, f, sk = read(m)
-                passed, failed, skipped = passed + p, failed + f, skipped + sk
-                seen.append(name)
-                break
-    return (passed + failed, failed, skipped, sorted(set(seen))) if seen else None
-
-
-def read_logs(paths):
-    """Saved runner logs -> {"files", "executed", "failed", "skipped", "runners", "oldest", "newest", "unrecognised"}. A log without a summary line of a known runner is no evidence."""
-    out = {"files": 0, "executed": 0, "failed": 0, "skipped": 0, "runners": [], "oldest": None, "newest": None, "unrecognised": []}
-    for path in paths:
-        try:
-            st = os.lstat(path)
-            if not stat.S_ISREG(st.st_mode) or st.st_size > LOG_CAP:
-                out["unrecognised"].append("%s (a link, not a file, or larger than %d MB)" % (clean(os.path.basename(path), 80), LOG_CAP >> 20))
-                continue
-            with open(path, "rb") as fh:
-                got = parse_runner_log(fh.read(LOG_CAP).decode("utf-8", "replace"))
-        except OSError:
-            out["unrecognised"].append("%s (could not be read)" % clean(os.path.basename(path), 80))
-            continue
-        if got is None:
-            out["unrecognised"].append("%s (no summary line of a runner this script knows)" % clean(os.path.basename(path), 80))
-            continue
-        out["files"] += 1
-        out["executed"], out["failed"], out["skipped"] = out["executed"] + got[0], out["failed"] + got[1], out["skipped"] + got[2]
-        out["runners"] = sorted(set(out["runners"]) | set(got[3]))
-        out["oldest"] = st.st_mtime if out["oldest"] is None else min(out["oldest"], st.st_mtime)
-        out["newest"] = st.st_mtime if out["newest"] is None else max(out["newest"], st.st_mtime)
-    return out
+# ---------------------------------------------------------------- raw runner logs (read by baseline_diff.py, which the baseline check shares)
+LOG_CAP, parse_runner_log, read_logs = baseline_diff.LOG_CAP, baseline_diff.parse_runner_log, baseline_diff.read_logs
 
 
 def utc(ts):
@@ -594,7 +487,18 @@ def check_rules(ctx, subject, evidence, caveats):
     return row("rules", "pass", "All %d P0 rule(s) this module answers for are named by at least one test." % len(p0))
 
 
-def baseline_state(ctx, suites, xml_paths, evidence, caveats, person):
+def baseline_info(ctx):
+    """(assessment of BASELINE.md, the measured evidence) for an uplift: is the baseline measured or only typed? (None, None) without a BASELINE.md."""
+    path = os.path.join(ctx["adir"], "BASELINE.md")
+    text = read_text(path)
+    if text is None:
+        return None, None
+    found = baseline_diff.evidence_paths(path, text)
+    measured = baseline_diff.read_baseline_evidence(found) if found else None
+    return baseline_diff.assess_baseline(baseline_diff.parse_baseline(text), measured), measured
+
+
+def baseline_state(ctx, suites, xml_paths, evidence, caveats, person, measured=None):
     """The uplift's baseline comparison: (state, detail, whether it could compare)."""
     path = os.path.join(ctx["adir"], "BASELINE.md")
     if not os.path.isfile(path):
@@ -602,7 +506,7 @@ def baseline_state(ctx, suites, xml_paths, evidence, caveats, person):
     if not xml_paths:
         return "gap", "BASELINE.md exists, but there are no result files to compare it with.", False
     try:
-        b = baseline_diff.run(path, xml_paths)
+        b = baseline_diff.run(path, xml_paths, measured=measured)
     except baseline_diff.InputError as err:
         return "gap", clean(str(err), 300), False
     keys = ("ok", "regressionsCount", "newFailuresCount", "fixedCount", "missingCount", "missingModulesCount", "moduleDiffsCount", "renamed", "executedDrop", "skippedGrowth",
@@ -630,6 +534,65 @@ def baseline_state(ctx, suites, xml_paths, evidence, caveats, person):
     if gaps:
         return "gap", "; ".join(gaps) + ".", True
     return "pass", "No regression: %d test(s) executed against %d in the baseline (%s)." % (b["fresh"]["counts"]["executed"], b["baseline"]["counts"]["executed"], b["baseline"]["source"]), True
+
+
+def check_baseline_measured(info, evidence):
+    """Check 7 (uplift): is the old version's baseline measured, or only typed?"""
+    if info is None:
+        return row("baseline", "na", "There is no BASELINE.md to check (see Same behavior).")
+    evidence["baselineEvidence"] = info
+    if info["kind"] == "target-only":
+        return row("baseline", "na", "BASELINE.md says target-only: the old version was not measured here (see Same behavior).")
+    if info["kind"] in ("typed", "none"):
+        ignored = " Files that only hold counts were ignored: %s." % ", ".join(info["ignored"][:3]) if info["ignored"] else ""
+        return row("baseline", "gap", "BASELINE.md is a table typed by hand: no per-test result file, per-test results file or raw runner log that this script can read backs it, so nothing shows the old "
+                                      "version really produced those numbers. Save the old version's results in analysis/<system>/baseline/ (or name them on a Recorded: line of BASELINE.md) "
+                                      "and run this again.%s" % ignored)
+    names = ", ".join("%s%s" % (x["kind"], " " + x["name"] if x.get("name") else "") for x in info["sources"][:3])
+    if info["conflict"]:
+        return row("baseline", "gap", "The baseline's own sources disagree with each other (%s), so it cannot be trusted." % "; ".join(info["conflictExamples"][:2]))
+    if info["disagree"]:
+        return row("baseline", "gap", "The measured results and BASELINE.md's typed table disagree on %d test(s) or count(s) (%s): the measured results were used, but a typed table that does not match its evidence cannot be trusted." % (
+            info["disagree"], "; ".join(info["examples"][:2])))
+    what = "%d test(s) (%d executed, %d failed)" % (info["measuredTests"], info["measuredExecuted"], info["measuredFailed"]) if info["measuredTests"] else "%d executed, %d failed" % (
+        info["measuredExecuted"] or 0, info["measuredFailed"] or 0)
+    return row("baseline", "pass", "The baseline is measured: %s from %s, and BASELINE.md agrees with it." % (what, names))
+
+
+def check_tests_kept(tc, person):
+    """Check 8 (uplift): were the tests kept as they were?"""
+    if not tc["checked"]:
+        return row("kept", "gap", "The test files could not be compared: %s." % tc["why"])
+    c = tc["counts"]
+    if c["added"] or c["removed"] or c["changed"]:
+        person.append("Review the test files that changed during the uplift (%d changed, %d added, %d removed; the list is in VERIFICATION.md). Weakened assertions cannot be detected, only that files changed." % (
+            c["changed"], c["added"], c["removed"]))
+    if not tc["legacyTests"]:
+        return row("kept", "gap", "%s (%d test file(s) in the working copy)." % (tc["why"][:1].upper() + tc["why"][1:], tc["workTests"]))
+    reasons = []
+    if c["removed"]:
+        reasons.append("%d legacy test file(s) are missing from the working copy (%s)" % (c["removed"], ", ".join(x["path"].rsplit("/", 1)[-1] for x in tc["removed"][:3])))
+    if tc["legacyTests"] and c["changed"] > uplift_checks.SHARE_LIMIT * tc["legacyTests"]:
+        reasons.append("%d of %d legacy test files (%.0f%%) were changed, more than the 25%% allowed" % (c["changed"], tc["legacyTests"], 100 * tc["share"]))
+    if reasons:
+        return row("kept", "gap", "; ".join(reasons) + ": the tests were edited or deleted, so passing them proves less. A person should review the list.")
+    return row("kept", "pass", "No legacy test file was removed and %d of %d (%.0f%%) changed; %d test file(s) were added. The list is for a person to review." % (c["changed"], tc["legacyTests"], 100 * tc["share"], c["added"]))
+
+
+def check_deltas(dc, person):
+    """Check 9 (uplift): does some test name the site of every Behavioral-silent delta?"""
+    if dc["parsed"] == 0:
+        return row("deltas", "gap", "%s." % dc["why"])
+    if dc["config"]:
+        person.append("%d Behavioral-silent delta(s) sit at a build or configuration file that a test cannot name (%s): a person decides how each is checked." % (
+            len(dc["config"]), ", ".join(x["id"] for x in dc["config"][:6])))
+    extra = " %d more at a build or configuration file (a test cannot name it; for a person)." % len(dc["config"]) if dc["config"] else ""
+    if dc["uncovered"]:
+        listed = "; ".join("%s (%s)" % (x["id"], x.get("why", "")) for x in dc["uncovered"][:4])
+        return row("deltas", "gap", "%d of %d Behavioral-silent delta(s) have no test that names their site: %s.%s" % (len(dc["uncovered"]), dc["silent"], listed, extra))
+    if not dc["silent"]:
+        return row("deltas", "pass", "%d delta(s) are in DELTA_CATALOG.md and none is Behavioral-silent.%s" % (dc["parsed"], extra))
+    return row("deltas", "pass", "All %d Behavioral-silent delta(s) (of %d in the catalog) have their site's file named by a test in the working copy.%s" % (len(dc["covered"]), dc["parsed"], extra))
 
 
 def check_same(ctx, subject, paths, dev, dev_problem, base, evidence, caveats):
@@ -784,6 +747,9 @@ def not_proven(subject, ev, legacy_ran):
     out.append("It does not cover speed, capacity, security, concurrency, or anything the tests and cases do not exercise.")
     if subject["track"] != "uplift":
         out.append("It traces only the rules that were extracted: behavior nobody wrote down as a rule has no rule to trace.")
+    else:
+        out.append("Weakened assertions cannot be detected: only that test files changed. A test file that was edited may check less than it did.")
+        out.append("A silent version change counts as covered when some test names its site's file, not when a test exercises the changed behavior.")
     out.append("A test that names a rule shows the rule is mentioned, not that the test is a good one. The canary shows only that some test can fail.")
     out.append("It does not replace the review and sign-off of the people who own the system.")
     return out
@@ -808,7 +774,8 @@ def evaluate(subject, ctx):
     g.update({"suites": per, "stale": oldest is not None and code_mtime(subject["path"]) > oldest + 2})       # any result file older than the code: not a clean run
     evidence["tests"] = dict({k: g[k] for k in ("executed", "failed", "skipped", "skippedNoReason", "stale")},
                              suites=[{k: e.get(k, "") for k in ("name", "command", "date", "note", "source", "files", "written", "executed", "failed", "skipped")} for e in per][:20])
-    base = baseline_state(ctx, suites, xml_paths, evidence, caveats, person) if uplift else None
+    binfo, bmeasured = baseline_info(ctx) if uplift else (None, None)
+    base = baseline_state(ctx, suites, xml_paths, evidence, caveats, person, bmeasured) if uplift else None
     paths = cases_paths(ctx["adir"], module, len(ctx["subjects"]))
     dev, dev_problem = judge(paths["cases"]) if paths["cases"] else (None, None)
     frs, fr_problem = judge(paths["fresh"]) if paths["fresh"] else (None, None)
@@ -820,6 +787,12 @@ def evaluate(subject, ctx):
     evidence["legacy"] = dict(ctx["runs"]["legacy"], ran=legacy_ran)
     checks = [check_tests(g, uplift, bool(base and base[2])), check_rules(ctx, subject, evidence, caveats), check_same(ctx, subject, paths, dev, dev_problem, base, evidence, caveats),
               check_fresh(ctx, paths, dev, legacy_ran, frs, fr_problem, evidence), check_canary(subject, module, ctx["runs"], evidence, ws, {x["name"].lower() for x in ctx["subjects"] if x["track"] != "uplift"}, clean_ids, g["failed"]), check_source(ctx)]
+    if uplift:
+        legacy_root = os.path.realpath(os.path.join(ws, "legacy", ctx["system"])) if os.path.lexists(os.path.join(ws, "legacy", ctx["system"])) else ""
+        evidence["testsChanged"] = uplift_checks.tests_changed(legacy_root, subject["path"])
+        catalog = read_text(os.path.join(ctx["adir"], "DELTA_CATALOG.md"))
+        evidence["deltas"] = uplift_checks.delta_coverage(catalog, subject["path"])
+        checks += [check_baseline_measured(binfo, evidence), check_tests_kept(evidence["testsChanged"], person), check_deltas(evidence["deltas"], person)]
     states = [c["state"] for c in checks]
     label = dict(CHECKS)
     return {"name": module, "track": subject["track"], "path": subject["rel"], "verdict": "NOT PROVEN" if "fail" in states else "PARTLY PROVEN" if "gap" in states else "PROVEN",
@@ -915,6 +888,37 @@ def render_md(pack):
             out += ["- Regression: %s (%s, now %s)" % (cell(x["id"]), x["before"], x["now"]) for x in b["regressions"][:10]] + ["- New failure: " + cell(x) for x in b["newFailures"][:10]]
         if ev.get("baseline", {}).get("approvedCount"):
             out += ["- Difference a person approved in BASELINE.md: %s (%s)" % (cell(x["id"]), cell(x["reason"] or "no reason given")) for x in ev["baseline"]["approved"][:10]]
+        if ev.get("baselineEvidence"):
+            a = ev["baselineEvidence"]
+            out += ["", "### Baseline evidence", "", ("Measured: %s." % ", ".join("%s%s" % (x["kind"], " " + cell(x["name"]) if x.get("name") else "") for x in a["sources"][:5])) if a["kind"] == "measured" else
+                    "Typed by hand: no per-test result file, per-test results file or raw runner log backs BASELINE.md."]
+            out += ["- The typed table disagrees on %d test(s) or count(s): %s" % (a["disagree"], "; ".join(cell(x) for x in a["examples"][:3]))] if a["disagree"] else []
+            out += ["- Sources disagree: " + "; ".join(cell(x) for x in a["conflictExamples"][:3])] if a["conflict"] else []
+            out += ["- Looked at: " + ", ".join(cell(x) for x in a["considered"][:8])] if a["considered"] else []
+        if ev.get("testsChanged"):
+            tc = ev["testsChanged"]
+            out += ["", "### Test files changed during the uplift", ""]
+            if tc["checked"]:
+                out += ["%d test file(s) in the legacy tree, %d in the working copy: %d removed, %d added, %d changed (%.0f%% of the legacy test files). Weakened assertions cannot be detected, only that files changed." % (
+                    tc["legacyTests"], tc["workTests"], tc["counts"]["removed"], tc["counts"]["added"], tc["counts"]["changed"], 100 * tc["share"])]
+                out += ["- Removed: `%s` (%d lines)" % (cell(x["path"]), x["lines"]) for x in tc["removed"]]
+                out += ["- Changed: `%s` (+%d -%d lines%s)" % (cell(x["path"]), x["added"], x["removed"], "; " + cell(x["note"]) if x["note"] else "") for x in tc["changed"]]
+                out += ["- Added: `%s` (%d lines)" % (cell(x["path"]), x["lines"]) for x in tc["added"]]
+                shown = len(tc["removed"]) + len(tc["changed"]) + len(tc["added"])
+                if sum(tc["counts"].values()) > shown:
+                    out.append("- ... and %d more (see VERIFICATION.json)." % (sum(tc["counts"].values()) - shown))
+            else:
+                out.append("Not compared: %s." % cell(tc["why"]))
+        if ev.get("deltas"):
+            dc = ev["deltas"]
+            out += ["", "### Version changes (deltas) and the tests that name them", ""]
+            if dc["parsed"]:
+                out += ["%d delta(s) in DELTA_CATALOG.md; %d are Behavioral-silent: %d have a test naming their site, %d do not; %d more at a build or configuration file." % (
+                    dc["parsed"], dc["silent"], len(dc["covered"]), len(dc["uncovered"]), len(dc["config"]))]
+                out += ["- Not named by any test: %s %s (%s)" % (cell(x["id"]), cell(x["title"]), cell(x.get("why", ""))) for x in dc["uncovered"][:LIST_CAP]]
+                out += ["- At a build or configuration file (for a person): %s %s (%s)" % (cell(x["id"]), cell(x["title"]), ", ".join(cell(y) for y in x["sites"][:3])) for x in dc["config"][:LIST_CAP]]
+            else:
+                out.append(cell(dc["why"]) + ".")
         if ev.get("leftOut"):
             out += ["", "Inputs left out of the fresh check: " + "; ".join(cell(x) for x in ev["leftOut"])]
         if "fresh" in ev:

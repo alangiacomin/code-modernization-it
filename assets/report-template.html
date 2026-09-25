@@ -353,6 +353,25 @@ function proofModule(m) {
   if (f) out.push(h('p', null, ['Fresh inputs: ' + fmt(f.inputs) + ' new input(s) counted from ' + fmt(f.executed) + ' comparisons: ' + fmt(f.same) + ' same' + within(f) + ', ' + fmt(f.differs) + ' differ, ' + fmt(f.missing) + ' missing.']));
   if (f) (f.tolerances || []).forEach(tol);
   if (b) out.push(h('p', null, ['Baseline comparison: ' + fmt(b.regressionsCount) + ' regressions, ' + fmt(b.newFailuresCount) + ' new failures, ' + fmt(b.fixedCount) + ' fixed, ' + fmt(b.missingCount) + ' missing.']));
+  if (m.uplift) {
+    var u = m.uplift, b = u.baseline, tc = u.testsChanged, dc = u.deltas, list = function (title, xs, fmtx) { out = out.concat(bullets(title, xs.map(fmtx))); };
+    if (b) {
+      out.push(h('p', null, [b.kind === 'measured' ? 'Baseline evidence: measured (' + b.sources.map(function (x) { return x.kind + (x.name ? ' ' + x.name : ''); }).join(', ') + ').' : b.kind === 'target-only' ? 'Baseline evidence: the baseline says target-only.' : 'Baseline evidence: typed by hand; no per-test result file, per-test results file or raw runner log backs it.']));
+      if (b.disagree) out.push(h('p', {class: 'note'}, ['The typed table disagrees with the measured results on ' + fmt(b.disagree) + ' test(s) or count(s): ' + b.examples.join('; ')]));
+      if (b.conflict) out.push(h('p', {class: 'note'}, ['The baseline sources disagree with each other: ' + b.conflictExamples.join('; ')]));
+    }
+    if (tc) {
+      out.push(h('p', null, [tc.checked ? 'Test files: ' + fmt(tc.legacyTests) + ' in the legacy tree, ' + fmt(tc.workTests) + ' in the working copy: ' + fmt(tc.counts.removed) + ' removed, ' + fmt(tc.counts.added) + ' added, ' + fmt(tc.counts.changed) + ' changed. Weakened assertions cannot be detected, only that files changed.' : 'Test files were not compared: ' + tc.why]));
+      list('Removed test files', tc.removed, function (x) { return x.path + ' (' + fmt(x.lines) + ' lines)'; });
+      list('Changed test files', tc.changed, function (x) { return x.path + ' (+' + fmt(x.added) + ' -' + fmt(x.removed) + ' lines' + (x.note ? '; ' + x.note : '') + ')'; });
+      list('Added test files', tc.added, function (x) { return x.path + ' (' + fmt(x.lines) + ' lines)'; });
+    }
+    if (dc) {
+      out.push(h('p', null, [dc.parsed ? fmt(dc.parsed) + ' delta(s) in the catalog; ' + fmt(dc.silent) + ' Behavioral-silent: ' + fmt(dc.coveredCount) + ' have a test naming their site, ' + fmt(dc.uncoveredCount) + ' do not.' : 'No delta could be read: ' + dc.why]));
+      list('Not named by any test', dc.uncovered, function (x) { return x.id + ' ' + x.title + (x.why ? ' (' + x.why + ')' : ''); });
+      list('At a build or configuration file (for a person)', dc.config, function (x) { return x.id + ' ' + x.title + ' (' + x.sites.join(', ') + ')'; });
+    }
+  }
   (m.canary || []).forEach(function (k) { out.push(h('p', {class: 'note'}, ['Canary' + (k.shown ? '' : ' (claimed only, no result file shows it)') + ': ' + k.change + ': ' + fmt(k.testsFailed) + ' tests failed.'])); });
   out = out.concat(bullets('Caveats', m.caveats || []), bullets('What this does not prove', m.notProven || []));
   var people = (m.people || []).map(function (i) { return '☐ ' + i.text + (i.where ? ' [' + i.where + ']' : ''); }).concat((m.needsPerson || []).map(function (i) { return '☐ ' + i; }));

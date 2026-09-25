@@ -13,6 +13,11 @@ Baseline, any of these (the most detailed one found is used):
   a totals table        | Executed | 946 |, | Passed | 945 |, | Failed | 1 | ...
   a line                target-only: <why the old version could not run here>   (nothing to compare)
 
+Measured or typed: a baseline typed by hand proves nothing about the old version. The old version's own evidence is looked for in
+analysis/<system>/baseline/ and at the paths on a "Recorded:" or "Machine-readable:" line of BASELINE.md inside analysis/<system>/ (JUnit or .trx XML, a per-test JSON map of test ids to
+outcomes, or a raw runner log with a known summary line; a file that only holds counts is ignored, and sources that disagree are a conflict). When it exists, it is what the fresh results are compared with,
+and the typed table must agree with it; when it does not, the report says "typed table only".
+
 Fresh results: JUnit-style XML (Maven surefire, Gradle, pytest --junitxml, Ant, jest-junit ...) or
 Visual Studio .trx files. Give a file or a folder; a folder is searched for result files, links are
 never followed, and a file that declares a DTD or entity is refused. A test id is
@@ -31,6 +36,7 @@ import argparse
 import json
 import os
 import re
+import stat
 import sys
 from xml.parsers import expat
 
@@ -53,6 +59,20 @@ def clean(value, limit=200):
 
 class InputError(Exception):
     pass
+
+
+def read_capped(path, cap):
+    """Bytes of a regular file inside the size cap; raises InputError with a plain reason for a link, a huge file or an unreadable one."""
+    try:
+        st = os.lstat(path)
+        if not stat.S_ISREG(st.st_mode):
+            raise InputError("%s is a link or not a regular file" % clean(os.path.basename(path), 80))
+        if st.st_size > cap:
+            raise InputError("%s is larger than %d MB" % (clean(os.path.basename(path), 80), cap >> 20))
+        with open(path, "rb") as fh:
+            return fh.read()
+    except OSError as err:
+        raise InputError("cannot read %s (%s)" % (clean(os.path.basename(path), 80), err.__class__.__name__))
 
 
 # ---------------------------------------------------------------- the baseline
@@ -309,6 +329,302 @@ def read_results(paths):
     return out
 
 
+# ---------------------------------------------------------------- raw runner logs (a saved run's own summary lines)
+LOG_CAP, LOG_LINE = 16 << 20, 2000
+NUM_WORD = re.compile(r"(\d+)\s+([A-Za-z]+)")
+
+
+def words(text):
+    """{'passed': 10, 'failed': 2} from '2 failed, 10 passed' style text."""
+    out = {}
+    for n, w in NUM_WORD.findall(text[:LOG_LINE]):
+        out[w.lower()] = out.get(w.lower(), 0) + int(n)
+    return out
+
+
+def _maven(m):
+    run, f, e, sk = (int(g) for g in m.groups())
+    return max(0, run - f - e - sk), f + e, sk
+
+
+def _pytest(m):
+    w = words(m.group(1))
+    return w.get("passed", 0) + w.get("xpassed", 0) + w.get("xfailed", 0), w.get("failed", 0) + w.get("error", 0) + w.get("errors", 0), w.get("skipped", 0)
+
+
+def _jest(m):
+    w = words(m.group(1))
+    return w.get("passed", 0), w.get("failed", 0), w.get("skipped", 0)
+
+
+def _php(m):
+    w = {k.lower(): int(v) for k, v in re.findall(r"([A-Za-z]+):\s*(\d+)", m.group(1)[:LOG_LINE])}
+    failed, skipped = w.get("failures", 0) + w.get("errors", 0), w.get("skipped", 0) + w.get("incomplete", 0)
+    return max(0, w.get("tests", 0) - failed - skipped), failed, skipped
+
+
+def _ctest(m):
+    failed, total = int(m.group(1)), int(m.group(2))
+    return max(0, total - failed), failed, 0
+
+
+def _gradle(m):
+    total, failed, skipped = int(m.group(1)), int(m.group(2) or 0), int(m.group(3) or 0)
+    return max(0, total - failed - skipped), failed, skipped
+
+
+# runner, a line pattern, and how to read (passed, failed, skipped) from a match. Every pattern is anchored and bounded.
+LOG_LINES = (
+    ("maven", re.compile(r"^(?:\[\w+\]\s*)?Tests run: (\d+), Failures: (\d+), Errors: (\d+), Skipped: (\d+)\s*$"), _maven),
+    ("gradle", re.compile(r"^(\d+) tests? completed(?:, (\d+) failed)?(?:, (\d+) skipped)?\s*$"), _gradle),
+    ("cargo", re.compile(r"^test result: (?:ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored;"), lambda m: (int(m.group(1)), int(m.group(2)), int(m.group(3)))),
+    ("pytest", re.compile(r"^(?:=+ )?((?:\d+ [a-z]+(?:, )?)+) in [\d.]+s(?: \([\d:]+\))?(?: =+)?\s*$"), _pytest),
+    ("pytest", re.compile(r"^(?:=+ )?no tests ran in [\d.]+s"), lambda m: (0, 0, 0)),
+    ("go test", re.compile(r"^\s*--- (PASS|FAIL|SKIP): \S"), lambda m: {"PASS": (1, 0, 0), "FAIL": (0, 1, 0), "SKIP": (0, 0, 1)}[m.group(1)]),
+    ("go test -json", re.compile(r'^\{.*"Action":"(pass|fail|skip)".*"Test":"[^"]+"'), lambda m: {"pass": (1, 0, 0), "fail": (0, 1, 0), "skip": (0, 0, 1)}[m.group(1)]),
+    ("dotnet test", re.compile(r"^(?:Passed|Failed)!\s+-\s+Failed:\s+(\d+),\s+Passed:\s+(\d+),\s+Skipped:\s+(\d+)"), lambda m: (int(m.group(2)), int(m.group(1)), int(m.group(3)))),
+    ("jest", re.compile(r"^\s*Tests:\s+(.*\b\d+ total)\s*$"), _jest),
+    ("vitest", re.compile(r"^\s*Tests\s{2,}(.*)\(\d+\)\s*$"), _jest),
+    ("ctest", re.compile(r"^\d+% tests passed, (\d+) tests? failed out of (\d+)"), _ctest),
+    ("phpunit", re.compile(r"^OK \((\d+) tests?, \d+ assertions?\)"), lambda m: (int(m.group(1)), 0, 0)),
+    ("phpunit", re.compile(r"^(Tests: \d+, Assertions: \d+.*?)\.?\s*$"), _php),
+)
+UNITTEST_RAN = re.compile(r"^Ran (\d+) tests? in [\d.]+s\s*$")
+UNITTEST_END = re.compile(r"^(?:OK|FAILED)(?: \(([^)]*)\))?\s*$")
+
+
+def parse_runner_log(text):
+    """(executed, failed, skipped, runners) from the runner's own summary lines, summed over the log; None when no line is recognised.
+    Recognised: Maven/Gradle, cargo, pytest, unittest, go test (-v or -json), dotnet test, jest, vitest, ctest, phpunit."""
+    passed = failed = skipped = 0
+    seen, ran = [], None
+    for line in text.split("\n")[:3000000]:
+        line = line.rstrip("\r")[:LOG_LINE]
+        if ran is not None and line.strip():
+            m = UNITTEST_END.match(line)
+            if m:
+                w = {k: int(v) for k, v in re.findall(r"(\w+)=(\d+)", (m.group(1) or "")[:LOG_LINE])}
+                f, sk = w.get("failures", 0) + w.get("errors", 0), w.get("skipped", 0)
+                passed, failed, skipped = passed + max(0, ran - f - sk), failed + f, skipped + sk
+                seen.append("unittest")
+            ran = None
+        m = UNITTEST_RAN.match(line)
+        if m:
+            ran = int(m.group(1))
+            continue
+        for name, rx, read in LOG_LINES:
+            m = rx.match(line)
+            if m:
+                p, f, sk = read(m)
+                passed, failed, skipped = passed + p, failed + f, skipped + sk
+                seen.append(name)
+                break
+    return (passed + failed, failed, skipped, sorted(set(seen))) if seen else None
+
+
+def read_logs(paths):
+    """Saved runner logs -> {"files", "executed", "failed", "skipped", "runners", "oldest", "newest", "unrecognised"}. A log without a summary line of a known runner is no evidence."""
+    out = {"files": 0, "executed": 0, "failed": 0, "skipped": 0, "runners": [], "oldest": None, "newest": None, "unrecognised": []}
+    for path in paths:
+        try:
+            st = os.lstat(path)
+            if not stat.S_ISREG(st.st_mode) or st.st_size > LOG_CAP:
+                out["unrecognised"].append("%s (a link, not a file, or larger than %d MB)" % (clean(os.path.basename(path), 80), LOG_CAP >> 20))
+                continue
+            with open(path, "rb") as fh:
+                got = parse_runner_log(fh.read(LOG_CAP).decode("utf-8", "replace"))
+        except OSError:
+            out["unrecognised"].append("%s (could not be read)" % clean(os.path.basename(path), 80))
+            continue
+        if got is None:
+            out["unrecognised"].append("%s (no summary line of a runner this script knows)" % clean(os.path.basename(path), 80))
+            continue
+        out["files"] += 1
+        out["executed"], out["failed"], out["skipped"] = out["executed"] + got[0], out["failed"] + got[1], out["skipped"] + got[2]
+        out["runners"] = sorted(set(out["runners"]) | set(got[3]))
+        out["oldest"] = st.st_mtime if out["oldest"] is None else min(out["oldest"], st.st_mtime)
+        out["newest"] = st.st_mtime if out["newest"] is None else max(out["newest"], st.st_mtime)
+    return out
+
+
+# ---------------------------------------------------------------- measured baselines: result files, raw logs, machine-readable results
+EVIDENCE_EXT = (".xml", ".trx", ".json", ".txt", ".log", ".out")
+PATH_TOKEN = re.compile(r"[A-Za-z0-9_.@+~-]+(?:/[A-Za-z0-9_.@+~-]+)*/?")
+
+
+RECORDED = re.compile(r"^[ \t>*-]*\**[ \t]*(?:recorded|machine-readable)\b[^:\n]{0,40}:", re.I)
+
+
+def evidence_paths(baseline_path, text):
+    """Where the old version's measured results are kept: the folder analysis/<system>/baseline/, and the paths on a line of BASELINE.md
+    that starts with "Recorded:" or "Machine-readable:" (a folder, or a file ending in .xml .trx .json .txt .log .out). Paths mentioned
+    anywhere else in the file are prose, not evidence. A path with a `..`, a link anywhere below the analysis folder, or a place outside
+    analysis/<system>/ is never used. -> the existing paths, at most 50."""
+    adir = os.path.dirname(os.path.abspath(baseline_path))
+    system, real_adir, found, seen = os.path.basename(adir), os.path.realpath(adir), [], set()
+
+    def add(comps):
+        cur = adir
+        for c in comps:
+            cur = os.path.join(cur, c)
+            if os.path.islink(cur):
+                return
+        if not os.path.lexists(cur):
+            return
+        real = os.path.realpath(cur)
+        try:
+            ok = os.path.commonpath([real_adir, real]) == real_adir
+        except ValueError:
+            ok = False
+        if ok and real not in seen and (os.path.isdir(cur) or os.path.isfile(cur)):
+            seen.add(real)
+            found.append(cur)
+
+    add(["baseline"])
+    for line in text.split("\n")[:20000]:
+        if not RECORDED.match(line[:4000]):
+            continue
+        for m in PATH_TOKEN.finditer(line[:4000]):
+            tok = m.group(0)
+            if not (tok.lower().endswith(EVIDENCE_EXT) or tok.endswith("/")):
+                continue
+            comps = [c for c in tok.split("/") if c]
+            if comps and comps[0] == "analysis":
+                comps = comps[2:] if len(comps) >= 3 and comps[1] == system else []
+            if comps and not any(c in (".", "..") for c in comps):
+                add(comps)
+            if len(found) >= 50:
+                return found
+    return found
+
+
+def parse_results_json(data):
+    """{test id: status} from a machine-readable per-test results document, or None. Recognised: {"test id": "PASS", ...}, {"tests": ...}
+    and [{"name": ..., "status": ...}, ...]. A document that only holds counts ({"PASS": 10, "FAIL": 1}) is not evidence of any test: anyone
+    can type one, so it is ignored."""
+    def status(v):
+        return STATUS.get(re.sub(r"[^a-z]", "", v.lower())) if isinstance(v, str) else None
+
+    obj = data["tests"] if isinstance(data, dict) and isinstance(data.get("tests"), (dict, list)) else data
+    tests = {}
+    if isinstance(obj, dict):
+        items = list(obj.items())[:MAX_CASES]
+        good = {str(k)[:400]: status(v) for k, v in items if status(v)}
+        if good and len(good) >= 0.9 * len(items):
+            tests = good
+    elif isinstance(obj, list):
+        for e in obj[:MAX_CASES]:
+            if isinstance(e, dict):
+                name = next((e[k] for k in ("test", "id", "name", "fullName", "fullname") if isinstance(e.get(k), str) and e[k]), None)
+                st = next((status(e[k]) for k in ("status", "result", "outcome") if status(e.get(k))), None)
+                if name and st:
+                    tests.setdefault(name[:400], st)
+    return tests or None
+
+
+def read_baseline_evidence(paths):
+    """Read what evidence_paths found: JUnit/TRX XML, machine-readable per-test JSON, and raw runner logs with a known summary line.
+    Two sources that disagree are reported as conflicts, never resolved by taking the first.
+    -> {"tests": {id: status} or None, "counts": {...} or None (a log alone), "sources", "considered", "ignored", "unreadable", "conflicts", "measured"}."""
+    out = {"tests": None, "counts": None, "sources": [], "considered": [], "ignored": [], "unreadable": [], "conflicts": [], "measured": False}
+    files = []
+    for p in paths:
+        if os.path.islink(p):
+            continue
+        if os.path.isdir(p):
+            for base, dirs, names in os.walk(p, followlinks=False):
+                dirs[:] = [d for d in sorted(dirs) if d not in SKIP_DIRS and not os.path.islink(os.path.join(base, d))]
+                files += [os.path.join(base, n) for n in sorted(names) if n.lower().endswith(EVIDENCE_EXT) and not os.path.islink(os.path.join(base, n))]
+                if len(files) >= 2000:
+                    break
+        elif p.lower().endswith(EVIDENCE_EXT):
+            files.append(p)
+    files = files[:2000]
+    out["considered"] = [clean(os.path.basename(f), 80) for f in files[:20]]
+    cat = lambda st: "BAD" if st in BAD else st  # noqa: E731
+    tests, conflicts = {}, []
+
+    def merge(more, label):
+        for k, v in more.items():
+            if k not in tests:
+                tests[k] = v
+            elif cat(tests[k]) != cat(v):
+                conflicts.append("%s: %s in one source, %s in %s" % (clean(k, 100), tests[k], v, label))
+
+    xml = [f for f in files if f.lower().endswith((".xml", ".trx"))]
+    if xml:
+        got = read_results(xml)
+        out["unreadable"] += got["unreadable"][:5]
+        if got["files"]:
+            merge(got["tests"], "the result files")
+            out["sources"].append({"kind": "result files", "files": got["files"], "tests": len(got["tests"])})
+    for f in [f for f in files if f.lower().endswith(".json")]:
+        name = clean(os.path.basename(f), 80)
+        try:
+            t = parse_results_json(json.loads(read_capped(f, MAX_FILE).decode("utf-8-sig")))
+        except (InputError, ValueError, RecursionError) as err:
+            out["unreadable"].append("%s: %s" % (name, clean(err, 100)))
+            continue
+        if t:
+            merge(t, name)
+            out["sources"].append({"kind": "machine-readable results", "files": 1, "tests": len(t), "name": name})
+        else:
+            out["ignored"].append(name)              # counts only, or no test entries: nothing that can be checked test by test
+    logs = read_logs([f for f in files if f.lower().endswith((".txt", ".log", ".out"))])
+    if logs["files"]:
+        out["sources"].append({"kind": "runner log", "files": logs["files"], "executed": logs["executed"], "runners": logs["runners"]})
+        if tests:
+            c = tally(tests.values())
+            if c["executed"] != logs["executed"] or c["fail"] + c["error"] != logs["failed"]:
+                conflicts.append("the runner log says %d executed and %d failed; the per-test results say %d and %d" % (logs["executed"], logs["failed"], c["executed"], c["fail"] + c["error"]))
+    out["tests"] = tests or None
+    out["counts"] = {"executed": logs["executed"], "failed": logs["failed"], "skipped": logs["skipped"]} if logs["files"] and not tests else None
+    out["conflicts"] = conflicts[:20]
+    out["measured"] = bool(tests or out["counts"])
+    return out
+
+
+def assess_baseline(base, measured):
+    """Is BASELINE.md measured or only typed? -> {"kind": "target-only" | "measured" | "typed" | "none", "sources", "disagree", "examples", ...}.
+    A typed table is measured only when a result file, a machine-readable results file or a raw log that this script parsed backs it, and
+    agrees with it (the same tests with the same outcomes, or the same executed and failed counts)."""
+    typed = bool(base["tests"] or base["modules"] or base["totals"])
+    info = {"kind": "typed" if typed else "none", "sources": [], "disagree": 0, "examples": [], "conflict": 0, "conflictExamples": [], "considered": list((measured or {}).get("considered", []))[:20],
+            "ignored": list((measured or {}).get("ignored", []))[:10], "unreadable": list((measured or {}).get("unreadable", []))[:5], "measuredTests": 0,
+            "measuredExecuted": None, "measuredFailed": None}
+    if base["targetOnly"]:
+        info["kind"] = "target-only"
+        return info
+    if not measured or not measured["measured"]:
+        return info
+    info["kind"], info["sources"] = "measured", list(measured["sources"])[:10]
+    info["conflict"] = len(measured.get("conflicts", []))
+    info["conflictExamples"] = [clean(c, 200) for c in measured.get("conflicts", [])[:3]]
+    cat = lambda st: "BAD" if st in BAD else st  # noqa: E731
+    typed_counts, _ = baseline_counts(base)
+    if measured["tests"] is not None:
+        c = tally(measured["tests"].values())
+        info.update(measuredTests=len(measured["tests"]), measuredExecuted=c["executed"], measuredFailed=c["fail"] + c["error"])
+        if base["tests"]:
+            bad = [t for t, st in base["tests"].items() if cat(measured["tests"].get(t, "")) != cat(st)]
+            info["disagree"], info["examples"] = len(bad), [clean(t, 120) for t in bad[:5]]
+        elif typed_counts and (typed_counts["executed"] != c["executed"] or typed_counts["fail"] + typed_counts["error"] != c["fail"] + c["error"]):
+            info["disagree"], info["examples"] = 1, ["typed: %d executed, %d failed; measured: %d executed, %d failed" % (
+                typed_counts["executed"], typed_counts["fail"] + typed_counts["error"], c["executed"], c["fail"] + c["error"])]
+    else:
+        m = measured["counts"]
+        info.update(measuredExecuted=m["executed"], measuredFailed=m["failed"])
+        if typed_counts and (typed_counts["executed"] != m["executed"] or typed_counts["fail"] + typed_counts["error"] != m["failed"]):
+            info["disagree"], info["examples"] = 1, ["typed: %d executed, %d failed; measured: %d executed, %d failed" % (
+                typed_counts["executed"], typed_counts["fail"] + typed_counts["error"], m["executed"], m["failed"])]
+    totals = base["totals"]            # a Totals table typed beside the rows must say what the evidence says
+    ex, fl = info["measuredExecuted"], info["measuredFailed"]
+    if totals and ex is not None and (("executed" in totals and totals["executed"] != ex) or (("fail" in totals or "error" in totals) and totals.get("fail", 0) + totals.get("error", 0) != fl)):
+        info["disagree"] += 1
+        info["examples"].append("the Totals table says %s executed and %s failed; measured: %d and %d" % (totals.get("executed", "?"), totals.get("fail", 0) + totals.get("error", 0), ex, fl))
+    return info
+
+
 # ---------------------------------------------------------------- the comparison
 def keep(items):
     return items[:KEEP]
@@ -318,7 +634,9 @@ def compare(base, fresh):
     """-> the report dict (see the module docstring)."""
     counts_b, source = baseline_counts(base)
     counts_f = tally(fresh["tests"].values())
-    rep = {"baseline": {"targetOnly": base["targetOnly"], "why": base["why"], "source": source, "counts": counts_b},
+    if base.get("measuredTests"):
+        source = "measured results"
+    rep = {"baseline": {"targetOnly": base["targetOnly"], "why": base["why"], "source": source, "counts": counts_b, "assessment": base.get("assessment")},
            "fresh": {"files": fresh["files"], "counts": counts_f, "unreadable": fresh["unreadable"][:20], "unreadableCount": len(fresh["unreadable"]),
                      "oldest": fresh["oldest"], "newest": fresh["newest"]},
            "regressions": [], "flaky": [], "newFailures": [], "stillFailing": [], "fixed": [], "newlySkipped": [], "missing": [], "renamed": 0,
@@ -401,6 +719,16 @@ def render(rep, limit=10):
              "this run (%d result file(s)): %s" % (rep["fresh"]["files"], show(f))]
     if rep["baseline"]["targetOnly"]:
         lines.append("BASELINE.md says target-only (%s): there is no old-version result to compare with." % (rep["baseline"]["why"] or "no reason given"))
+    a = rep["baseline"].get("assessment")
+    if a and a["kind"] == "measured":
+        lines.append("baseline evidence: measured (%s)" % "; ".join("%s%s" % (s["kind"], " %s" % s["name"] if s.get("name") else "") for s in a["sources"][:4]))
+        if a["conflict"]:
+            lines.append("  but the sources disagree with each other: %s" % "; ".join(a["conflictExamples"][:3]))
+        elif a["disagree"]:
+            lines.append("  but the typed table disagrees with it on %d test(s): %s" % (a["disagree"], "; ".join(a["examples"][:3])))
+    elif a and a["kind"] == "typed":
+        lines.append("baseline evidence: typed table only. No result file, per-test results file or raw log that this script can read was found in analysis/<system>/baseline/ or on a Recorded: or Machine-readable: line of BASELINE.md.%s" % (
+            " Ignored (counts only): " + ", ".join(a["ignored"][:3]) if a["ignored"] else ""))
 
     def block(title, key, fmt=lambda x: clean(x, 160)):
         if rep[key + "Count"]:
@@ -433,8 +761,10 @@ def render(rep, limit=10):
     return "\n".join(lines)
 
 
-def run(baseline_path, paths):
-    """-> the report. Raises InputError for a baseline or results that cannot be used."""
+def run(baseline_path, paths, measured="auto"):
+    """-> the report. Raises InputError for a baseline or results that cannot be used. `measured` is the old version's own evidence
+    (from read_baseline_evidence); by default it is looked for beside BASELINE.md (see evidence_paths). Measured per-test results,
+    when there are any, are what the fresh results are compared with; the typed table is only checked against them."""
     if os.path.islink(baseline_path):
         raise InputError("%s is a symbolic link" % baseline_path)
     try:
@@ -445,6 +775,12 @@ def run(baseline_path, paths):
     base = parse_baseline(text)
     if not (base["targetOnly"] or base["modules"] or base["tests"] or base["totals"]):
         raise InputError("%s has no per-test table, per-module table, totals or target-only line that can be read" % baseline_path)
+    if measured == "auto":
+        found = evidence_paths(baseline_path, text)
+        measured = read_baseline_evidence(found) if found else None
+    base["assessment"] = assess_baseline(base, measured)
+    if base["assessment"]["kind"] == "measured" and measured["tests"]:
+        base["tests"], base["measuredTests"] = measured["tests"], True
     return compare(base, read_results(paths))
 
 
@@ -452,6 +788,8 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="Compare a fresh test run with BASELINE.md.")
     ap.add_argument("baseline", help="analysis/<system>/BASELINE.md")
     ap.add_argument("--junit", "--trx", action="append", default=[], metavar="PATH", help="a results file or a folder to search (repeat for several)")
+    ap.add_argument("--baseline-evidence", action="append", default=[], metavar="PATH",
+                    help="a file or folder with the old version's own results (XML, JSON map, raw log); default: analysis/<system>/baseline/ and the paths BASELINE.md names")
     ap.add_argument("--json", action="store_true", help="print the full report as JSON")
     ap.add_argument("--max-list", type=int, default=10, help="how many entries to print per list (default 10)")
     args = ap.parse_args(argv)
@@ -459,7 +797,7 @@ def main(argv=None):
         print("baseline_diff.py: give at least one --junit file or folder", file=sys.stderr)
         return 2
     try:
-        rep = run(args.baseline, args.junit)
+        rep = run(args.baseline, args.junit, read_baseline_evidence(args.baseline_evidence) if args.baseline_evidence else "auto")
     except InputError as err:
         print("baseline_diff.py: %s" % err, file=sys.stderr)
         return 2

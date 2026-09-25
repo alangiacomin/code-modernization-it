@@ -12,7 +12,7 @@ itself: **keep the result file or the raw log of every test run and every canary
 `test-runs.json`.** You write nothing in `legacy/`, never hand-edit the built code, the tests, an output or a result
 to improve a verdict, and never tick or approve anything a person owns. Run every command from the workspace root.
 
-The code is `legacy/$system`, often a symlink to where it really lives: say where it points (`readlink legacy/$system`) in one line before you start. Run any subagent in the foreground and wait for its result: never end your turn while one is still running.
+The code is `legacy/$system`, often a symlink to where it really lives: say where it points (`readlink legacy/$system`) in one line before you start. Run any subagent in the foreground and wait for its result: never end your turn while one is still running. Stop any server or other process you started before you finish, and say you did. Before running any suite or the legacy code, read its configuration for the databases and services it connects to: if any is not a local or throwaway instance, stop and ask which environment to use.
 
 ## 1 — What was built
 
@@ -49,6 +49,16 @@ clean run's. A `Canary:` line in the notes is a claim; the pack does not count i
 A test that pins the old version's behavior and fails on the new one is a difference, not a test bug, and tests the pilot added after
 the baseline show as new failures (say so in the suite `note`). A person decides each: fix the code, update the test, or approve it in a
 table headed "Approved differences", `| Test | Reason |`, in `BASELINE.md`. You never edit or approve.
+
+**Uplift: three more checks the pack makes by itself.** (1) *The baseline must be measured.* `BASELINE.md`'s numbers count only when a
+per-test result file (JUnit or `.trx` XML), a per-test JSON map (`{"<test id>": "PASS"}`) or a raw runner log with a summary line backs
+them, kept in `analysis/$system/baseline/` or named on a line of `BASELINE.md` that starts with `Recorded:` or `Machine-readable:`. A
+table typed by hand, or a file of bare counts, is only PARTLY PROVEN. If the old version's results were never saved, run its suite again
+from a scratch copy of `legacy/$system` and keep them now; never write them in by hand. (2) *Tests kept.* The pack walks the test files of
+`legacy/$system` and of the working copy and lists what was removed, added or changed: a removed file, or more than a quarter changed,
+is a gap for a person to review (weakened assertions cannot be detected, only that files changed). (3) *Deltas covered.* Every
+Behavioral-silent delta in `DELTA_CATALOG.md` needs a test in the working copy that names its site's file; if none does, the pack lists
+it (add a characterization test at that site).
 
 ## 4 — Judge equivalence again, then on inputs nobody used
 
@@ -114,6 +124,8 @@ missing, say so in one line and carry on), then name the next step. **PARTLY PRO
 command. A failure caused by this machine: run the suite where the tool works (a terminal outside the sandbox, or CI), then run this
 command again. A difference the notes call intended: a person records it (`approvedDifference` in the case, or the table in
 `BASELINE.md`); you never do. P0 rules no test names: add the rule id to each test that pins it, then run this again. Any other failing
-test or difference: `/code-modernization:modernize-transform $system <module>`, or for an uplift `/code-modernization:modernize-uplift $system`.
+test or difference: `/code-modernization:modernize-transform $system <module>`, or for an uplift `/code-modernization:modernize-uplift $system`
+(also for a baseline typed by hand, which is measured again in its Step 4, and for a silent delta no test names, which gets a
+characterization test there). Removed or changed test files are a person's review, never yours to undo.
 **PROVEN:** it is evidence, not approval. A named person signs `analysis/$system/VERIFICATION.md`; then the brief's next module, or
 `/code-modernization:modernize-harden $system`.

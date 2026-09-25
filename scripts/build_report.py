@@ -321,6 +321,8 @@ def equivalence_view(obj):
 # ---------------------------------------------------------------- the proof pack (VERIFICATION.json)
 PROOF_VERDICTS = ("PROVEN", "PARTLY PROVEN", "NOT PROVEN")
 PROOF_CHECKS = (("tests", "Tests ran"), ("rules", "Rules traced"), ("same", "Same behavior"), ("fresh", "Fresh inputs"), ("canary", "Canary"), ("source", "Source untouched"))
+UPLIFT_CHECKS = (("baseline", "Baseline measured"), ("kept", "Tests kept"), ("deltas", "Deltas covered"))      # an uplift has these three as well
+KEPT_SHARE = 0.25
 RULE_STATES = ("tested", "claimed only", "code only", "none")
 FRESH_NEEDED = 10
 
@@ -351,14 +353,42 @@ def counts_of(obj, keys):
     return {k: count_of(obj.get(k)) for k in keys}
 
 
+def uplift_view(ev):
+    """The uplift-only evidence of a pack, made safe: the baseline's assessment, the test files that changed, and the deltas no test names."""
+    bev, tc, dc = ev.get("baselineEvidence"), ev.get("testsChanged"), ev.get("deltas")
+    if not any(isinstance(x, dict) for x in (bev, tc, dc)):
+        return {"baseline": None, "testsChanged": None, "deltas": None}
+    files = lambda xs, keys: [dict({"path": text_of(x.get("path"), 300)}, **{k: count_of(x.get(k)) for k in keys}, note=text_of(x.get("note"), 80)) for x in (xs if isinstance(xs, list) else [])[:40] if isinstance(x, dict)]  # noqa: E731
+    listed = lambda xs: [{"id": text_of(x.get("id"), 40), "title": text_of(x.get("title"), 200), "why": text_of(x.get("why"), 200), "sites": texts_of(x.get("sites"), 200, 5)} for x in (xs if isinstance(xs, list) else [])[:40] if isinstance(x, dict)]  # noqa: E731
+    out = {"baseline": None, "testsChanged": None, "deltas": None}
+    if isinstance(bev, dict):
+        out["baseline"] = {"kind": bev.get("kind") if bev.get("kind") in ("measured", "typed", "target-only", "none") else "none", "disagree": count_of(bev.get("disagree")), "conflict": count_of(bev.get("conflict")),
+                           "sources": [{"kind": text_of(x.get("kind"), 40), "name": text_of(x.get("name"), 80), "tests": count_of(x.get("tests")), "executed": count_of(x.get("executed"))}
+                                       for x in (bev.get("sources") if isinstance(bev.get("sources"), list) else [])[:10] if isinstance(x, dict)],
+                           "examples": texts_of(bev.get("examples"), 200, 5), "conflictExamples": texts_of(bev.get("conflictExamples"), 200, 5), "considered": texts_of(bev.get("considered"), 80, 10), "ignored": texts_of(bev.get("ignored"), 80, 10)}
+    if isinstance(tc, dict):
+        counts = counts_of(tc.get("counts"), ("added", "removed", "changed"))
+        out["testsChanged"] = {"checked": tc.get("checked") is True, "why": text_of(tc.get("why"), 300), "legacyTests": count_of(tc.get("legacyTests")), "workTests": count_of(tc.get("workTests")),
+                               "counts": counts, "share": num_of(tc.get("share")), "removed": files(tc.get("removed"), ("lines",)), "added": files(tc.get("added"), ("lines",)),
+                               "changed": files(tc.get("changed"), ("added", "removed"))}
+    if isinstance(dc, dict):
+        unc = listed(dc.get("uncovered"))
+        out["deltas"] = {"parsed": count_of(dc.get("parsed")), "silent": count_of(dc.get("silent")), "coveredCount": len(dc["covered"]) if isinstance(dc.get("covered"), list) else 0,
+                         "uncoveredCount": max(len(unc), len(dc["uncovered"]) if isinstance(dc.get("uncovered"), list) else 0), "uncovered": unc, "config": listed(dc.get("config")), "why": text_of(dc.get("why"), 300)}
+    return out
+
+
 def proof_module(m, problems):
     """One module of VERIFICATION.json, made safe, with its verdict recomputed from its own checks: the file's word is never taken."""
     name = text_of(m.get("name"), 120) or "(unnamed)"
     ev = m["evidence"] if isinstance(m.get("evidence"), dict) else {}
+    track = text_of(m.get("track"), 20)
+    required = PROOF_CHECKS + (UPLIFT_CHECKS if track == "uplift" else ())
+    known = dict(PROOF_CHECKS + UPLIFT_CHECKS)
     by_id = {}
     for c in (m["checks"] if isinstance(m.get("checks"), list) else [])[:20]:
-        if isinstance(c, dict) and c.get("id") in dict(PROOF_CHECKS) and c.get("state") in ("pass", "gap", "fail", "na") and c["id"] not in by_id:
-            by_id[c["id"]] = {"id": c["id"], "label": dict(PROOF_CHECKS)[c["id"]], "state": c["state"], "detail": text_of(c.get("detail"), 700)}
+        if isinstance(c, dict) and c.get("id") in known and c.get("state") in ("pass", "gap", "fail", "na") and c["id"] not in by_id:
+            by_id[c["id"]] = {"id": c["id"], "label": known[c["id"]], "state": c["state"], "detail": text_of(c.get("detail"), 700)}
     tests = counts_of(ev.get("tests"), ("executed", "failed", "skipped"))
     rules = ev["rules"] if isinstance(ev.get("rules"), dict) else None
     p0 = [{"id": text_of(r.get("id"), 40), "name": text_of(r.get("name"), 200), "confidence": text_of(r.get("confidence"), 10),
@@ -367,7 +397,7 @@ def proof_module(m, problems):
     fresh = dict(counts_of(ev.get("fresh"), ("inputs", "executed", "same", "differs", "missing", "withinTolerance")), tolerances=tolerances_of(ev.get("fresh"))) if isinstance(ev.get("fresh"), dict) else None
     eq = ev.get("equivalence") if isinstance(ev.get("equivalence"), dict) else None
     notes = []
-    for cid, label in PROOF_CHECKS:                     # a pack that leaves a check out cannot be PROVEN
+    for cid, label in required:                         # a pack that leaves a check out cannot be PROVEN
         if cid not in by_id:
             by_id[cid] = {"id": cid, "label": label, "state": "gap", "detail": "This check is missing from VERIFICATION.json."}
             notes.append("the %s check is missing" % label.lower())
@@ -384,10 +414,25 @@ def proof_module(m, problems):
         if by_id[cid]["state"] == "pass" and isinstance(bad, dict) and (count_of(bad.get("differs")) or count_of(bad.get("missing"))):
             by_id[cid].update(state="fail", detail="Some cases differ or are missing, whatever the file says.")
             notes.append("it says %s passed but cases differ or are missing" % by_id[cid]["label"].lower())
-    if by_id["tests"]["state"] == "pass" and tests["failed"] and text_of(m.get("track"), 20) != "uplift":
+    if by_id["tests"]["state"] == "pass" and tests["failed"] and track != "uplift":
         by_id["tests"].update(state="fail", detail="Some tests failed, whatever the file says.")
         notes.append("it says tests passed but some failed")
-    checks = [by_id[cid] for cid, _ in PROOF_CHECKS]
+    up = uplift_view(ev) if track == "uplift" else None
+    if up is not None:                                   # the three uplift checks must match the evidence beside them
+        bev, tc, dc = up["baseline"], up["testsChanged"], up["deltas"]
+        expected = "na" if bev is None or bev["kind"] == "target-only" else "pass" if bev["kind"] == "measured" and not bev["disagree"] and not bev["conflict"] else "gap"
+        if by_id["baseline"]["state"] in ("pass", "na") and expected == "gap":
+            by_id["baseline"].update(state="gap", detail="The baseline is not shown to be measured, whatever the file says.")
+            notes.append("it says the baseline is measured but the evidence shows otherwise")
+        kept_ok = tc is not None and tc["checked"] and tc["legacyTests"] > 0 and not tc["counts"]["removed"] and tc["counts"]["changed"] <= KEPT_SHARE * tc["legacyTests"]
+        if by_id["kept"]["state"] in ("pass", "na") and not kept_ok:
+            by_id["kept"].update(state="gap", detail="The test files are not shown to be kept, whatever the file says.")
+            notes.append("it says the tests were kept but the evidence shows otherwise")
+        deltas_ok = dc is not None and dc["parsed"] > 0 and not dc["uncoveredCount"]
+        if by_id["deltas"]["state"] in ("pass", "na") and not deltas_ok:
+            by_id["deltas"].update(state="gap", detail="The deltas are not shown to be covered, whatever the file says.")
+            notes.append("it says the deltas are covered but the evidence shows otherwise")
+    checks = [by_id[cid] for cid, _ in required]
     states = {c["state"] for c in checks}
     verdict = "NOT PROVEN" if "fail" in states else "PARTLY PROVEN" if "gap" in states else "PROVEN"
     if m.get("verdict") in PROOF_VERDICTS and m.get("verdict") != verdict or notes:
@@ -404,7 +449,7 @@ def proof_module(m, problems):
                                 masks=[{"why": text_of(k.get("why"), 200), "cases": count_of(k.get("cases"))} for k in (eq.get("masks") if isinstance(eq.get("masks"), list) else [])[:10] if isinstance(k, dict)]) if eq else None,
             "fresh": fresh, "baseline": counts_of(base, ("regressionsCount", "newFailuresCount", "fixedCount", "missingCount", "renamed")) if base else None,
             "canary": [{"change": text_of(c.get("change"), 200), "testsFailed": count_of(c.get("testsFailed")), "shown": c.get("shown") is True} for c in (ev.get("canary") if isinstance(ev.get("canary"), list) else [])[:10] if isinstance(c, dict)],
-            "notProven": texts_of(m.get("notProven"), 400, 12), "needsPerson": texts_of(m.get("needsPerson"), 300, 10), "caveats": texts_of(m.get("caveats"), 400, 20),
+            "uplift": up, "notProven": texts_of(m.get("notProven"), 400, 16), "needsPerson": texts_of(m.get("needsPerson"), 300, 10), "caveats": texts_of(m.get("caveats"), 400, 20),
             "people": items, "peopleCount": max(count_of(brief.get("count")), len(items)), "briefFound": brief.get("found") is True}
 
 
