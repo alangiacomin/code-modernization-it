@@ -54,8 +54,7 @@ is asked twice: `brief` takes its target stack from it and never overrides it wi
 In at most eight lines, tailored to their goal, list the commands they will run in order (`preflight`, `assess`, `map`,
 `extract-rules`, `review` when rules are flagged for a person, `brief`, then `uplift`, `transform` or `reimagine`, then `verify` and `harden`), one line each on what they get
 and where a person decides. For "understand it first" stop after `brief`. For "not sure", run `preflight` and `assess`
-first and let the assessment's recommended pattern pick the road. Name the two places a human decides (approving the brief,
-accepting each difference the proof finds) so nothing surprises them.
+first and let the assessment's recommended pattern pick the road. Name the places a person decides (the preflight answers, the rules that look wrong, approving the brief, accepting each difference the proof finds, signing the proof, applying the security patch) so nothing surprises them. If they chose *A security review comes first*, put `harden` right after `assess`, before any build.
 
 ## 6 — First step
 

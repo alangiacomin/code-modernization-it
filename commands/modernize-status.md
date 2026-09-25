@@ -7,7 +7,7 @@ arguments: system
 Report where the modernization of `$system` stands, in one screen. This command inspects and never modifies,
 except that it refreshes `analysis/$system/REPORT.html` (`python3
 "${CLAUDE_PLUGIN_ROOT}/scripts/build_report.py" $system`, a convenience: if it fails or `python3` is missing, say so in one line and carry on). If nothing
-exists yet, the answer is `/code-modernization:modernize-preflight $system`.
+exists yet, the answer is `/code-modernization:modernize $system --source <path to the code>`, which asks what the person wants and starts preflight.
 
 ## 1 — Inventory
 
