@@ -63,9 +63,11 @@ available). The approval authorizes the build-out.
 **With the Workflow tool,** scaffold **every** service in the approved architecture (no cap; the runtime
 queues agents). Tell the user the service count, then:
 
+Call it by name (the plugin registers it). If the tool does not know the name, pass `scriptPath: "${CLAUDE_PLUGIN_ROOT}/workflows/reimagine-scaffold.js"` instead:
+
 ```
 Workflow({
-  scriptPath: "${CLAUDE_PLUGIN_ROOT}/workflows/reimagine-scaffold.js",
+  name: "code-modernization:modernize-reimagine-scaffold",
   args: { system: "$system", services: [
     { name: "<service-name>", responsibilities: "<one line from the architecture>" }, ...
   ] }

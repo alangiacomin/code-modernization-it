@@ -11,7 +11,7 @@ equivalence. This is one vertical slice of the strangler fig; output goes to
 The code is `legacy/$system`, often a symlink to where it really lives: say where it points (`readlink legacy/$system`) in one line before you start. Run every subagent in the foreground and wait for its result: never end your turn while one is still running. **If `$module` or `$target_stack` is empty**, read
 `analysis/$system/MODERNIZATION_BRIEF.md`: take the target stack it names, and the first module of
 the earliest phase whose `Command:` is `transform` that has no
-`modernized/$system/<module>/TRANSFORMATION_NOTES.md` yet. Say which you picked.
+`modernized/$system/<module>/TRANSFORMATION_NOTES.md` yet (with no brief, the target in `INTENT.md`). Say which you picked.
 
 ## Step 0 — Toolchain, then the plan (human gate)
 
@@ -42,7 +42,8 @@ prove equivalence, and anything ambiguous that needs a human decision now.
 Spawn the **test-engineer** subagent: "Write characterization tests for module $module of legacy/$system.
 Read the source, identify every observable behavior and encode each as a test with concrete input and
 expected output derived from the legacy logic. Target framework: <right for $target_stack>. Write to
-`modernized/$system/$module/src/test/`. These tests define 'done'. Follow your secret-handling rules:
+`modernized/$system/$module/src/test/`. These tests define 'done'. Name the `RULE-NNN` id(s) each test pins
+(from `analysis/$system/BUSINESS_RULES.md`) in its name or a one-line comment, so the trace can find it. Follow your secret-handling rules:
 no credential from legacy code becomes a fixture; use fake same-shape values and read anything live
 from environment variables." Show the user the test file and get a yes before going on.
 
@@ -85,6 +86,8 @@ unreachable branches) and why; the canary result and the executed-case count; fo
 dependent module. Show one representative behavior side by side
 (`diff -y --width=160 <(sed -n '<lines>p' <legacy file>) <target file>`). Never pick a credential-bearing
 range, and mask any credential-like literal in the notes: they live in `modernized/` and get committed.
+This is your own evidence: `/code-modernization:modernize-verify $system $module` is the independent re-check
+(it re-runs the tests and the comparison, tries new inputs, and gives one verdict).
 
 ## Step 5 — Architecture review
 

@@ -35,9 +35,11 @@ commentary.
 formula, 5 + N + M**: 5 finders, N refuters (one per distinct finding), M second judges (one per finding
 still Critical or High after refutation); N and M are known only once the finders return.
 
+Call it by name (the plugin registers it). If the tool does not know the name, pass `scriptPath: "${CLAUDE_PLUGIN_ROOT}/workflows/harden-scan.js"` instead:
+
 ```
 Workflow({
-  scriptPath: "${CLAUDE_PLUGIN_ROOT}/workflows/harden-scan.js",
+  name: "code-modernization:modernize-harden-scan",
   args: { system: "$system" }
 })
 ```
@@ -121,7 +123,7 @@ Only when the user takes the offer. Call the workflow again with just the gaps, 
 
 ```
 Workflow({
-  scriptPath: "${CLAUDE_PLUGIN_ROOT}/workflows/harden-scan.js",
+  name: "code-modernization:modernize-harden-scan",
   args: { system: "$system", classes: <deadFinders>, findings: <unverified> }
 })
 ```

@@ -50,9 +50,11 @@ A run is capped at 1000 agents: for more than about 70 shards, launch parts of a
 one `Workflow` call after another, and merge the results (concatenate rules, de-duplicate
 by `source` + name) before rendering once.
 
+Call it by name (the plugin registers it). If the tool does not know the name, pass `scriptPath: "${CLAUDE_PLUGIN_ROOT}/workflows/extract-rules.js"` instead:
+
 ```
 Workflow({
-  scriptPath: "${CLAUDE_PLUGIN_ROOT}/workflows/extract-rules.js",
+  name: "code-modernization:modernize-extract-rules-mine",
   args: {
     system: "$system",
     modules: <contents of analysis/$system/extract-rules.modules.json>,   // omit in lens mode
@@ -70,7 +72,7 @@ resume. Show the workflow's per-batch log lines as they arrive.
 - **Stopped or failed** (`status: failed`, `TaskStop`, an interrupted session) so no result
   came back: if the error names the args, fix them and relaunch; otherwise **resume, never
   restart, and never fall back to Method B**: completed agents are journaled. Stop a run that
-  is somehow still going, then re-invoke with the **identical** `scriptPath` and `args` (re-read
+  is somehow still going, then re-invoke with the **identical** workflow `name` and `args` (re-read
   the modules file; cut it the same way if split) plus `resumeFromRunId: "<Run ID>"`. Finished
   agents replay instantly. After `parallel[i] failed` lines the resume re-runs from that
   batch onward, still far cheaper than starting over. If resume is impossible, read
@@ -79,7 +81,7 @@ resume. Show the workflow's per-batch log lines as they arrive.
 - **Completed with failures** (`<failures>` lists dead agents): **do not resume** (a failed
   agent makes the journal replay everything after it). Use the result: `rerunModules` holds
   every shard with a gap, re-passable. Render what was confirmed, then offer one follow-up
-  invocation (same `scriptPath`, `args.modules` = `rerunModules`, no `resumeFromRunId`) and
+  invocation (same workflow `name`, `args.modules` = `rerunModules`, no `resumeFromRunId`) and
   fold its result in.
 
 ### 4. Render

@@ -1,10 +1,10 @@
 ---
 description: Same-stack version uplift (e.g. .NET Framework 4.8 to .NET 8, Java 8 to 17) — keep the code, fix the version deltas, prove nothing changed
-argument-hint: <system> <source-version> <target-version> [project-pattern]
+argument-hint: <system> [source-version] [target-version] [project-pattern]
 arguments: system source_version target_version project_pattern
 ---
 
-Uplift `$system` from **legacy/$system_version** to **$target_version**: same stack, newer version.
+Uplift `$system` from **$source_version** to **$target_version**: same stack, newer version.
 The code is `legacy/$system`, often a symlink to where it really lives: say where it points (`readlink legacy/$system`) in one line before you start. Run every subagent in the foreground and wait for its result: never end your turn while one is still running.
 
 This is **not** `transform`, which extracts intent and rewrites idiomatically. Here the code is good
@@ -22,7 +22,8 @@ recorded outputs on the target only. That is fine, but label it honestly (Step 0
 
 ## Step 0 — Toolchain and version pinning (fail fast)
 
-1. **Pin the version pair exactly.** If either version is vague (".NET" with no number), stop and ask.
+1. **Pin the version pair exactly.** If the versions were not given, take them from `analysis/$system/INTENT.md` or the
+   brief. If either version is missing or vague (".NET" with no number), stop and ask.
 2. **Target runtime, required.** Verify it builds and tests (`dotnet --version` and a `dotnet test`
    smoke; `mvn` or `gradle`; `python3 -V` and `pytest`).
 3. **Source runtime, the baseline oracle.** Verify the *old* version also runs here. If it does not
@@ -87,7 +88,7 @@ pair; the working-copy plan; which ecosystem tool you will drive and whether it 
 project order with the overrides above; the harness plan and **whether a true dual run is possible or
 it is target-only** (.NET: one test project multi-targeted, the `net48` leg needs Windows; Java: a
 double JDK build; Python: separate interpreter environments); how equivalence is proven (**the baseline
-on legacy/$system_version is the oracle and $target_version must reproduce it**, or characterization tests
+on $source_version is the oracle and $target_version must reproduce it**, or characterization tests
 against recorded outputs); anything ambiguous.
 
 ## Step 3 — Delta catalog (the driver artifact)
@@ -98,11 +99,13 @@ brief may have just built it); regenerate only if missing or stale.
 
 **Preferred, with the Workflow tool** (this invocation authorizes it):
 
+Call it by name (the plugin registers it); if the tool does not know the name, pass `scriptPath: "${CLAUDE_PLUGIN_ROOT}/workflows/uplift-deltas.js"` instead:
+
 ```
 Workflow({
-  scriptPath: "${CLAUDE_PLUGIN_ROOT}/workflows/uplift-deltas.js",
+  name: "code-modernization:modernize-uplift-deltas",
   args: { system: "$system",
-          source: "legacy/$system_version", target: "$target_version", projectPattern: "$project_pattern" }
+          source: "$source_version", target: "$target_version", projectPattern: "$project_pattern" }
 })
 ```
 
@@ -114,7 +117,7 @@ first. The finders are read-only: **you** write `DELTA_CATALOG.md`. Surface `inj
 `upliftVsRewriteSignal` (see the end of this file).
 
 **Fallback:** spawn the **version-delta-analyst** agent: "Build the delta catalog for uplifting legacy/$system
-from legacy/$system_version to $target_version. Run the ecosystem migration tool in report mode, intersect its
+from $source_version to $target_version. Run the ecosystem migration tool in report mode, intersect its
 findings and the known breaking changes with what this code uses, cover all four categories, cite
 file:line, flag silent-behavioral deltas as test-before-touch, never under-report dependency deltas."
 
@@ -128,7 +131,7 @@ Either way rank by blast radius and mark each delta **Mechanical** (a codemod ca
    trivial real type and assert on it under both targets; if that will not go green on both, fix the
    harness now, not mid-migration. If the source leg cannot run here (Step 0.3), prove the target leg and
    mark it target-only.
-2. **Baseline is the oracle, and it goes in a file.** Run the existing suite on **legacy/$system_version** and
+2. **Baseline is the oracle, and it goes in a file.** Run the existing suite on **`legacy/$system`** (the $source_version code) and
    write the per-test table to **`analysis/$system/BASELINE.md`**, including the tests legacy fails: you
    are proving *no behavior changed*, not *all tests pass*. If the source runtime cannot run here, write
    the single line `target-only: <why>` instead. Step 5 does not start until the file exists.
@@ -178,10 +181,12 @@ Only after the pilot and playbook are approved. With a handful of units left, re
 in dependency order, in-session. For many units **the playbook is the prompt**: brief agents from what the
 pilot proved about this codebase, not from general knowledge. With the Workflow tool:
 
+Call it by name (the plugin registers it); if the tool does not know the name, pass `scriptPath: "${CLAUDE_PLUGIN_ROOT}/workflows/uplift-migrate.js"` instead:
+
 ```
 Workflow({
-  scriptPath: "${CLAUDE_PLUGIN_ROOT}/workflows/uplift-migrate.js",
-  args: { system: "$system", source: "legacy/$system_version", target: "$target_version",
+  name: "code-modernization:modernize-uplift-migrate",
+  args: { system: "$system", source: "$source_version", target: "$target_version",
           units: [ { name: "<unit>", path: "<dir relative to modernized/$system-uplifted/>",
                      deps: ["<sibling unit this one depends on>", ...] }, ... ] }
 })

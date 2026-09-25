@@ -23,9 +23,11 @@ list the subdirectories first (`ls -d <parent-dir>/*/ | xargs -n1 basename`; the
 script has no filesystem access), tell the user the count (30 systems means 30
 agents), then run one survey agent per system:
 
+Call it by name (the plugin registers it). If the tool does not know the name, pass `scriptPath: "${CLAUDE_PLUGIN_ROOT}/workflows/portfolio-assess.js"` instead:
+
 ```
 Workflow({
-  scriptPath: "${CLAUDE_PLUGIN_ROOT}/workflows/portfolio-assess.js",
+  name: "code-modernization:modernize-portfolio-assess",
   args: { parentDir: "<parent-dir>", systems: ["<sub1>", "<sub2>", ...] }
 })
 ```
