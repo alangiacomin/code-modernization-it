@@ -1,3 +1,5 @@
+import { linesOf } from '../text'
+
 /**
  * `analysis/<system>/MODERNIZATION_BRIEF.md`, read without a model: the
  * target stack, the phases, which modules each phase names, the exit
@@ -67,11 +69,15 @@ export function criterionTextOf(line: string): string | null {
  *   its text mentions as whole words
  */
 export function parseBrief(text: string, knownModules: readonly string[] = []): Brief {
-  const lines = text.split('\n')
+  const lines = linesOf(text)
 
   const titleLine = lines.find(line => /^#\s+/.test(line)) ?? ''
   const arrow = /[→>]\s*(.+?)\s*$/.exec(titleLine.replace(/->/g, '→'))
-  const target = arrow?.[1] !== undefined ? strip(arrow[1]) : undefined
+  // The title may hold the arrow inside a parenthesis: `(COBOL/CICS → Java/Spring)`. The close is not part of the target.
+  const fromTitle = arrow?.[1] !== undefined ? strip(arrow[1]).replace(/\)$/, m => (arrow[1]?.includes('(') === true ? m : '')) : undefined
+  // The header's own `**Target stack:** `java-spring`` is the token the commands take: it wins when it is one plain token.
+  const stackToken = /\*\*Target stack:?\*\*:?\s*`([A-Za-z0-9][\w.+/-]{0,59})`/i.exec(text)?.[1]
+  const target = stackToken ?? fromTitle
 
   const phases: Phase[] = []
   let current: { phase: Phase; body: string[]; level: number } | null = null

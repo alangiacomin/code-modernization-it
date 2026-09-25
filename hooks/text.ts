@@ -35,3 +35,9 @@ const SYSTEM_NAME = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/
 export const isToken = (value: string): boolean => TOKEN.test(value)
 
 export const isSystemName = (value: string): boolean => SYSTEM_NAME.test(value)
+
+/** The longest line a reader looks at. A line of a table or a heading is a few hundred characters; a longer one is not a card, and a pattern run over a million characters of it is what a hostile file is for. */
+export const MAX_LINE = 4_000
+
+/** `text` as lines, each cut to what a reader looks at. */
+export const linesOf = (text: string): string[] => text.split('\n').map(line => (line.length > MAX_LINE ? line.slice(0, MAX_LINE) : line))

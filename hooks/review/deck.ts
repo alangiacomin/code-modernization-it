@@ -69,7 +69,10 @@ export function decide(
   verdict: ReviewVerdict,
   atIso: string,
 ): ReviewLedger {
-  return { ...ledger, [rule.id]: { verdict, at: atIso, title: rule.title } }
+  // The reviewer's own words on the rule stay through a new verdict: the deck decides, it does not rewrite what was said.
+  const note = ledger[rule.id]?.note
+
+  return { ...ledger, [rule.id]: { verdict, at: atIso, title: rule.title, ...(note !== undefined && { note }) } }
 }
 
 /** `ledger` with `rule`'s verdict taken back. */
@@ -98,6 +101,9 @@ const VERDICT_WORDS: Record<ReviewVerdict, string> = {
   discuss: 'Needs discussion',
 }
 
+/** One table cell: one line, no pipe that would end it. */
+const cell = (text: string | undefined): string => (text ?? '').replace(/\s+/g, ' ').replace(/\\/g, '\\\\').replace(/\|/g, '\\|').trim()
+
 /** The ledger as a page a person or a model reads: `RULE_REVIEWS.md`. */
 export function ledgerMarkdown(system: string, ledger: ReviewLedger): string {
   const entries = Object.entries(ledger).sort((a, b) => a[0].localeCompare(b[0], 'en', { numeric: true }))
@@ -110,11 +116,11 @@ export function ledgerMarkdown(system: string, ledger: ReviewLedger): string {
     '',
     'A rule marked **Wrong** or **Needs discussion** is not settled: do not build on it until it is resolved. A rule with no row here has not been reviewed.',
     '',
-    '| Rule | Verdict | When | Title |',
-    '|---|---|---|---|',
+    '| Rule | Verdict | When | Title | Note |',
+    '|---|---|---|---|---|',
     ...entries.map(
       ([id, entry]) =>
-        `| ${id} | ${VERDICT_WORDS[entry.verdict]} | ${entry.at.slice(0, 10)} | ${(entry.title ?? '').replace(/\|/g, '\\|')} |`,
+        `| ${id} | ${VERDICT_WORDS[entry.verdict]} | ${entry.at.slice(0, 10)} | ${cell(entry.title)} | ${cell(entry.note)} |`,
     ),
     '',
   ].join('\n')

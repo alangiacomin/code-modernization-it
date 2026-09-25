@@ -1,7 +1,7 @@
 import type { EngineInterface, On, PluginOptions, ResultOf } from 'claude-code'
 
-import { lineOf, missingPathOf, noteCall, noteDone, noteFailure, prune, subjectOf } from './fleet/fleet'
-import type { Host } from './host'
+import { lineOf, missingPathOf, noteCall, noteDone, noteFailure, prune, subjectOf, tallyOf } from './fleet/fleet'
+import type { Host, OpenResult } from './host'
 import { paint, tilesOf, type TouchKind } from './map/estate'
 import { absOf, baseName, isUnder, join, norm, relTo } from './paths'
 import { keysOfUnit, unitOfPath } from './reader/estate-model'
@@ -11,6 +11,7 @@ import { oneLineOf, readSnapshot, REVIEWS_FILE } from './reader/progress'
 import type { ReviewVerdict } from './reader/progress'
 import { nodeOfFile } from './reader/topology'
 import { decide, ledgerJson, ledgerMarkdown, nextUnreviewed, queueOf, undecide, type DeckScope } from './review/deck'
+import { mergeLedger, parseLedger } from './review/ledger'
 import { signBrief } from './sign'
 import {
   newActivity,
@@ -24,11 +25,13 @@ import {
 } from './state'
 import { readTestRun, TEST_COMMAND } from './tests-run'
 import { deckView, signView } from './views/deck'
-import { headerRowsOf, paneView, planOf, showBar, type Kit } from './views/pane'
+import { headerRowsOf, legendRowsOf, nextRowsOf, paneView, planOf, showBar, type Kit } from './views/pane'
 import { plain } from './text'
 import { xrayOf } from './xray/xray'
 
 const REFRESH_DEBOUNCE_MS = 450
+/** While a fleet of agents is writing, a read of everything on disk is due this often, not after every call. */
+const REFRESH_BUSY_MS = 2500
 const FRAME_MS = 140
 const CLOCK_MS = 1000
 const POLL_MS = 20_000
@@ -66,7 +69,7 @@ function hostOf($: EngineInterface): Host {
     status: text => $.ui.status(text),
     toast: (text, timeoutMs) => $.ui.toast(text, timeoutMs !== undefined ? { timeoutMs } : undefined),
     log: text => $.ui.log(text),
-    openPane: pane => $.ui.open(pane),
+    openPane: pane => $.ui.open(pane) as Promise<OpenResult>,
     closePane: pane => $.ui.close(pane),
     registerCommand: spec => $.command.register(spec),
     fillPrompt: input => $.prompt.fill(input),
@@ -162,11 +165,17 @@ export function register(on: On, raw: PluginOptions) {
   }
 
   function scheduleRefresh(host: Host): void {
-    state.timers.get('refresh')?.cancel()
+    // A read is already due, and it will see everything written so far. Pushing it out with every call would starve
+    // it for as long as agents keep writing, and the map would show nothing of a fan-out until it was over.
+    if (state.timers.has('refresh')) {
+      return
+    }
+
+    const isBusy = tallyOf(state.fleet, nowMs()).active >= 3
 
     state.timers.set(
       'refresh',
-      host.after(REFRESH_DEBOUNCE_MS, () => {
+      host.after(isBusy ? REFRESH_BUSY_MS : REFRESH_DEBOUNCE_MS, () => {
         state.timers.delete('refresh')
         void refresh(host)
       }),
@@ -358,6 +367,7 @@ export function register(on: On, raw: PluginOptions) {
       filter,
       queue,
       ledger: snapshot.reviews,
+      edits: new Map(),
       index: nextUnreviewed(queue, snapshot.reviews, 0),
       source: null,
       isSourceShown: false,
@@ -378,8 +388,13 @@ export function register(on: On, raw: PluginOptions) {
       return
     }
 
-    await host.fs.write(join('analysis', system, REVIEWS_FILE), ledgerJson(system, state.deck.ledger))
-    await host.fs.write(join('analysis', system, 'RULE_REVIEWS.md'), ledgerMarkdown(system, state.deck.ledger))
+    // The review command writes this file too: what it added while the deck was open is kept, this session's decisions go on top.
+    const onDisk = parseLedger(await readOrNull(host.fs, join('analysis', system, REVIEWS_FILE)))
+    const merged = mergeLedger(onDisk, state.deck.edits)
+
+    state.deck.ledger = merged
+    await host.fs.write(join('analysis', system, REVIEWS_FILE), ledgerJson(system, merged))
+    await host.fs.write(join('analysis', system, 'RULE_REVIEWS.md'), ledgerMarkdown(system, merged))
     scheduleRefresh(host)
   }
 
@@ -445,6 +460,7 @@ export function register(on: On, raw: PluginOptions) {
       }
 
       state.deck.ledger = decide(state.deck.ledger, rule, verdict, new Date(nowMs()).toISOString())
+      state.deck.edits.set(rule.id, state.deck.ledger[rule.id] ?? null)
       state.deck.index = nextUnreviewed(state.deck.queue, state.deck.ledger, state.deck.index + 1)
       state.deck.isSourceShown = false
       void saveLedger(host).catch(() => undefined)
@@ -455,6 +471,7 @@ export function register(on: On, raw: PluginOptions) {
 
       if (rule !== undefined) {
         state.deck.ledger = undecide(state.deck.ledger, rule.id)
+        state.deck.edits.set(rule.id, null)
         void saveLedger(host).catch(() => undefined)
         host.invalidate()
       }
@@ -578,11 +595,21 @@ export function register(on: On, raw: PluginOptions) {
 
   // ------------------------------------------------------------------ pane
 
-  async function openPane(host: Host): Promise<void> {
-    await host.openPane({ id: PANE_ID, title: 'Modernization' })
-    state.pane.isOpen = true
+  /**
+   * Opens the pane. Opened unasked on a terminal too narrow to dock a pane, the engine holds it undrawn: it is not open to
+   * the person, so the bar with the show button stays where it was, and pressing that button (the person asking) seats
+   * the pane at any width.
+   */
+  async function openPane(host: Host): Promise<{ isPlaced: boolean; reason: string }> {
+    const result: OpenResult = await host.openPane({ id: PANE_ID, title: 'Modernization' })
+    const isPlaced = result === undefined || result.isPlaced !== false
+
+    state.pane.isOpen = isPlaced
+    state.pane.isWaiting = !isPlaced
     state.pane.isClosedByPerson = false
     void refresh(host)
+
+    return { isPlaced, reason: result !== undefined && result.reason !== undefined ? result.reason : '' }
   }
 
   const paneActionsOf = (host: Host) => ({
@@ -635,6 +662,7 @@ export function register(on: On, raw: PluginOptions) {
     },
     close: () => {
       state.pane.isOpen = false
+      state.pane.isWaiting = false
       state.pane.isClosedByPerson = true
       void host.closePane({ id: PANE_ID }).catch(() => undefined)
     },
@@ -662,6 +690,7 @@ export function register(on: On, raw: PluginOptions) {
       host !== null &&
       state.options.panel === 'auto' &&
       !state.pane.isOpen &&
+      !state.pane.isWaiting &&
       !state.pane.isClosedByPerson &&
       !state.timers.has('auto-open') &&
       state.snapshot !== null &&
@@ -789,7 +818,13 @@ export function register(on: On, raw: PluginOptions) {
         oneLineOf(snapshot),
         e.props.bodyColumns,
         () => {
-          void openPane(host).catch(() => undefined)
+          void openPane(host)
+            .then(result => {
+              if (!result.isPlaced) {
+                host.toast(`The pane could not be shown: ${result.reason}`, 8000)
+              }
+            })
+            .catch(() => undefined)
         },
       )
     }
@@ -838,6 +873,7 @@ export function register(on: On, raw: PluginOptions) {
     const rows = wholeOf(e.props.scroll.bodyRows)
 
     state.pane.isOpen = true
+    state.pane.isWaiting = false
     state.pane.bodyColumns = columns
     state.pane.bodyRows = rows
     state.pane.placement = e.props.placement
@@ -852,6 +888,8 @@ export function register(on: On, raw: PluginOptions) {
         [...state.fleet.signatures.values()].filter(signature => signature.agents.size >= 3).length,
       hasMap: snapshot !== null && snapshot.estate !== null && kit.Raster !== undefined,
       headerRows: headerRowsOf(snapshot, columns),
+      nextRows: nextRowsOf(snapshot, state, columns),
+      legendRows: legendRowsOf(snapshot, columns),
     })
 
     let estate: { cells: string; columns: number; rows: number; tiles: State['estate'] extends infer T ? (T extends { tiles: infer U } ? U : never) : never } | null = null
@@ -897,6 +935,7 @@ export function register(on: On, raw: PluginOptions) {
 
     if (e.id === PANE_ID) {
       state.pane.isOpen = false
+      state.pane.isWaiting = false
       state.pane.isClosedByPerson = e.origin.kind === 'person' || state.pane.isClosedByPerson
 
       if (state.estate !== null) {
@@ -954,6 +993,13 @@ export function register(on: On, raw: PluginOptions) {
                     tests: module.tests,
                     reviewDate: module.reviewDate,
                   })),
+                  proof:
+                    snapshot.verification === null
+                      ? null
+                      : {
+                          overall: snapshot.verification.overall,
+                          modules: [...snapshot.proofs].map(([name, proof]) => ({ name, state: proof.state, verdict: proof.verdict ?? null, reason: proof.reason })),
+                        },
                   totals: snapshot.totals,
                   percent: snapshot.percent,
                   attention: snapshot.attention,
@@ -969,15 +1015,16 @@ export function register(on: On, raw: PluginOptions) {
 
     if (wantsClose) {
       state.pane.isOpen = false
+      state.pane.isWaiting = false
       state.pane.isClosedByPerson = true
       await host.closePane({ id: PANE_ID }).catch(() => undefined)
 
       return { text: 'Modernization pane hidden' }
     }
 
-    await openPane(host)
+    const opened = await openPane(host)
 
-    return { text: 'Modernization pane shown' }
+    return { text: opened.isPlaced ? 'Modernization pane shown' : `The pane could not be shown: ${opened.reason}` }
   })
 
   on('command.run', { command: 'modernize-review' }, async ($, e, next) => {
@@ -1199,12 +1246,6 @@ export function register(on: On, raw: PluginOptions) {
 
       if ((tool === 'Bash' || tool === 'PowerShell') && typeof args.command === 'string' && TEST_COMMAND.test(args.command)) {
         const run = readTestRun(text)
-        const spent = nowMs() - startMs
-
-        if (agentId === undefined) {
-          state.activity.testMs += spent
-          state.activity.testRuns += 1
-        }
 
         if (run !== null) {
           note = `${run.executed} executed${run.skipped > 0 ? `, ${run.skipped} skipped` : ''}${run.failed > 0 ? `, ${run.failed} failed` : ''}`
@@ -1227,8 +1268,6 @@ export function register(on: On, raw: PluginOptions) {
       state.activity.running.delete(e.tool_use_id)
 
       if (agentId === undefined) {
-        state.activity.toolMs += ms
-
         const finished: FinishedCall = {
           tool,
           subject,

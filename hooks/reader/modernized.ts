@@ -1,4 +1,5 @@
 import { join } from '../paths'
+import { linesOf } from '../text'
 import { listOrEmpty, readOrNull, type ReaderFs } from './fs'
 
 /**
@@ -20,6 +21,8 @@ export type ModuleState =
   | 'scaffolded'
   | 'tests-written'
   | 'tests-red'
+  /** An uplift's tests fail and there is no baseline row to say whether the source runtime failed them too. */
+  | 'tests-failing'
   | 'tests-green'
   | 'reviewed'
   | 'ported'
@@ -138,9 +141,23 @@ const REPORT_DIRS = [
 
 const REPORT_FILES = ['junit.xml', 'report.xml', 'test-report.xml', 'pytest.xml']
 
-/** The test totals a directory's report files hold: a custom JSON report, JUnit XML, or a `.trx`. */
-export async function readTests(fs: ReaderFs, dir: string): Promise<TestTotals | null> {
-  const custom = await readOrNull(fs, join(dir, '.modernize/test-report.json'))
+/** When a file last changed; 0 when it cannot be said. */
+async function changedAt(fs: ReaderFs, path: string): Promise<number> {
+  try {
+    return (await fs.stat(path)).mtimeMs
+  } catch {
+    return 0
+  }
+}
+
+/**
+ * The test totals a directory's report files hold: a custom JSON report, JUnit XML, or a `.trx`, and when the newest of
+ * the files read last changed (what a verdict about the module is compared with).
+ */
+export async function readTestsAt(fs: ReaderFs, dir: string, withTime = true): Promise<{ totals: TestTotals; atMs: number } | null> {
+  const stamp = (path: string) => (withTime ? changedAt(fs, path) : Promise.resolve(0))
+  const customPath = join(dir, '.modernize/test-report.json')
+  const custom = await readOrNull(fs, customPath)
 
   if (custom !== null) {
     try {
@@ -148,11 +165,14 @@ export async function readTests(fs: ReaderFs, dir: string): Promise<TestTotals |
       const num = (key: string) => (typeof raw[key] === 'number' ? (raw[key] as number) : 0)
 
       return {
-        tests: num('tests'),
-        failures: num('failures'),
-        errors: num('errors'),
-        skipped: num('skipped'),
-        reports: 1,
+        totals: {
+          tests: num('tests'),
+          failures: num('failures'),
+          errors: num('errors'),
+          skipped: num('skipped'),
+          reports: 1,
+        },
+        atMs: await stamp(customPath),
       }
     } catch {
       // fall through to the XML reports
@@ -160,6 +180,7 @@ export async function readTests(fs: ReaderFs, dir: string): Promise<TestTotals |
   }
 
   let total: TestTotals | null = null
+  let atMs = 0
 
   for (const sub of REPORT_DIRS) {
     const entries = await listOrEmpty(fs, join(dir, sub))
@@ -176,11 +197,12 @@ export async function readTests(fs: ReaderFs, dir: string): Promise<TestTotals |
 
       if (totals !== null) {
         total = total === null ? totals : add(total, totals)
+        atMs = Math.max(atMs, await stamp(join(dir, sub, entry.name)))
       }
     }
 
     if (total !== null) {
-      return total
+      return { totals: total, atMs }
     }
   }
 
@@ -189,11 +211,16 @@ export async function readTests(fs: ReaderFs, dir: string): Promise<TestTotals |
     const totals = xml !== null ? totalsOfJunitXml(xml) : null
 
     if (totals !== null) {
-      return totals
+      return { totals, atMs: await stamp(join(dir, name)) }
     }
   }
 
   return null
+}
+
+/** The test totals a directory's report files hold, without asking when each file changed. */
+export async function readTests(fs: ReaderFs, dir: string): Promise<TestTotals | null> {
+  return (await readTestsAt(fs, dir, false))?.totals ?? null
 }
 
 const TEST_DIRS = ['src/test', 'tests', 'test', 'spec', '__tests__']
@@ -217,7 +244,7 @@ export function readNotes(notes: string): {
   isSwitched: boolean
   followUps: number
 } {
-  const lines = notes.split('\n')
+  const lines = linesOf(notes)
   // The plugin's review step spawns the architecture critic and lists what it found in the notes; how the notes
   // headline that varies, so any heading that says review or critic counts, and so does naming the critic.
   const named = lines.findIndex(line => /^#{1,4}\s+.*\b(?:review|critic)/i.test(line))
@@ -311,9 +338,13 @@ export function stateOfUplift(
 ): ModuleState | 'untouched' {
   if (tests !== null && tests.tests > 0) {
     const bad = tests.failures + tests.errors
-    const allowed = baseline === null ? 0 : baseline.fail + baseline.error
 
-    if (bad > allowed) {
+    // With no baseline row there is nothing to be worse than: the failures are said, not judged.
+    if (baseline === null && bad > 0) {
+      return 'tests-failing'
+    }
+
+    if (baseline !== null && bad > baseline.fail + baseline.error) {
       return 'tests-red'
     }
 
@@ -351,16 +382,10 @@ export async function readModernizedIn(
     const path = join(root, entry.name)
     const notes = await readOrNull(fs, join(path, 'TRANSFORMATION_NOTES.md'))
     const read = notes !== null ? readNotes(notes) : null
-    const tests = (await readTests(fs, path)) ?? observed.get(path) ?? null
-    let mtimeMs = 0
-
-    if (notes !== null) {
-      try {
-        mtimeMs = (await fs.stat(join(path, 'TRANSFORMATION_NOTES.md'))).mtimeMs
-      } catch {
-        mtimeMs = 0
-      }
-    }
+    const reported = await readTestsAt(fs, path)
+    const tests = reported?.totals ?? observed.get(path) ?? null
+    // The newest of the notes and the test reports: what a verdict about the module is checked against.
+    const mtimeMs = Math.max(notes !== null ? await changedAt(fs, join(path, 'TRANSFORMATION_NOTES.md')) : 0, reported?.atMs ?? 0)
 
     const facts = {
       dir: entry.name,

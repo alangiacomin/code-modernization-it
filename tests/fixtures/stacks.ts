@@ -8,7 +8,12 @@ import type { ReaderFs } from '../../hooks/reader/fs'
  */
 
 /** A file tree in memory, read the way the reader reads `$.fs`. */
-export function memoryFs(files: Readonly<Record<string, string>>, mtimes: Readonly<Record<string, number>> = {}): ReaderFs {
+export function memoryFs(
+  files: Readonly<Record<string, string>>,
+  mtimes: Readonly<Record<string, number>> = {},
+  /** Paths that are symbolic links to a directory: listed as `other`, as the engine lists a link; `stat` says `dir`. */
+  links: readonly string[] = [],
+): ReaderFs {
   const dirs = new Set<string>([''])
 
   for (const path of Object.keys(files)) {
@@ -61,11 +66,16 @@ export function memoryFs(files: Readonly<Record<string, string>>, mtimes: Readon
         names.set(name, rest.includes('/') ? 'dir' : 'file')
       }
 
-      return [...names.entries()].sort().map(([name, kind]) => ({
-        name,
-        kind,
-        size: kind === 'file' ? (files[dir === '' ? name : `${dir}/${name}`]?.length ?? 0) : 0,
-      }))
+      return [...names.entries()].sort().map(([name, kind]) => {
+        const isLink = links.includes(dir === '' ? name : `${dir}/${name}`)
+
+        return {
+          name,
+          kind: isLink ? ('other' as const) : kind,
+          size: kind === 'file' ? (files[dir === '' ? name : `${dir}/${name}`]?.length ?? 0) : 0,
+          isLink,
+        }
+      })
     },
   }
 }

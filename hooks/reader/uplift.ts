@@ -1,4 +1,5 @@
 import { join } from '../paths'
+import { linesOf } from '../text'
 import { unitOfPath, type EstateModel, type EstateUnit } from './estate-model'
 import type { ReaderFs } from './fs'
 import { readTests, stateOfUplift, type ModernizedModule, type ModuleState, type TestTotals } from './modernized'
@@ -18,6 +19,11 @@ export type Baseline = {
   results: number | null
   /** One row per module, keyed by the module path lower-cased with no trailing slash. */
   rows: Map<string, BaselineRow>
+  /**
+   * A baseline of one module has no per-module table: its title names the module and a small table gives the totals
+   * (`| Passed | 945 |`). Those totals are that module's row.
+   */
+  headline: { title: string; row: BaselineRow } | null
 }
 
 const int = (text: string | undefined): number => {
@@ -42,13 +48,10 @@ const keyOf = (text: string): string =>
     .trim()
     .toLowerCase()
 
-/** The module key a working-copy path is looked up by. */
-export const baselineKeyOf = keyOf
-
 /** Reads a baseline file: any table with pass and fail columns gives a row per module. */
 export function parseBaseline(text: string): Baseline {
   const rows = new Map<string, BaselineRow>()
-  const lines = text.split('\n')
+  const lines = linesOf(text)
 
   for (let index = 0; index < lines.length - 1; index += 1) {
     const head = lines[index] ?? ''
@@ -87,14 +90,58 @@ export function parseBaseline(text: string): Baseline {
     }
   }
 
-  const totals = /([\d,]+)\s+test\s+results?/i.exec(text)?.[1] ?? /\btotal\b[^\n]{0,40}?([\d,]{2,})\s+tests?\b/i.exec(text)?.[1]
+  const totals = /(?<![\d,])(\d[\d,]{0,14})\s+test\s+results?/i.exec(text)?.[1] ?? /\btotal\b[^\n]{0,40}?([\d,]{2,15})\s+tests?\b/i.exec(text)?.[1]
   const summed = [...rows.values()].reduce((sum, row) => sum + row.pass + row.fail + row.error + row.skip, 0)
+
+  // The first `| Passed | 945 |` style lines, whatever else the file holds.
+  const counts: Partial<Record<keyof BaselineRow, number>> = {}
+
+  for (const line of lines) {
+    const found = /^\s*\|\s*\**\s*(pass(?:ed)?|fail(?:ed|ures?)?|errors?|skipped|skip)\s*\**\s*\|\s*\**\s*([\d,]+)\s*\**\s*\|?\s*$/i.exec(line)
+
+    if (found !== null) {
+      const word = (found[1] ?? '').toLowerCase()
+      const key: keyof BaselineRow = word.startsWith('pass') ? 'pass' : word.startsWith('fail') ? 'fail' : word.startsWith('err') ? 'error' : 'skip'
+
+      counts[key] ??= int(found[2])
+    }
+  }
+
+  const title = (lines.find(line => /^#\s+/.test(line)) ?? '').replace(/^#\s+/, '').replace(/[`*]/g, '').trim()
 
   return {
     isTargetOnly: /^\s*target-only:/im.test(text),
     results: totals !== undefined ? int(totals) : rows.size > 0 ? summed : null,
     rows,
+    headline:
+      counts.pass !== undefined && counts.fail !== undefined && title !== ''
+        ? { title, row: { pass: counts.pass, fail: counts.fail, error: counts.error ?? 0, skip: counts.skip ?? 0 } }
+        : null,
   }
+}
+
+/**
+ * The baseline's row for one module: its own row, else the file's headline totals when its title names the module
+ * (a pilot's baseline is one module's, and says so in its title). Null when there is nothing to compare with.
+ */
+export function baselineRowOf(baseline: Baseline | null, dir: string): BaselineRow | null {
+  if (baseline === null || dir === '') {
+    return null
+  }
+
+  const own = baseline.rows.get(keyOf(dir))
+
+  if (own !== undefined) {
+    return own
+  }
+
+  if (baseline.headline === null) {
+    return null
+  }
+
+  const escaped = keyOf(dir).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+  return new RegExp(`(?<![\\w./-])${escaped}(?![\\w./-])`, 'i').test(baseline.headline.title) ? baseline.headline.row : null
 }
 
 export type Catalog = {
@@ -113,7 +160,7 @@ export function parseCatalog(text: string): Catalog | null {
   const byFileBase = new Map<string, string[]>()
   let current: string | null = null
 
-  for (const line of text.split('\n')) {
+  for (const line of linesOf(text)) {
     const opens = /^\s*(?:\|\s*\**|#{1,6}\s+\**)(D-?\d{1,3})\b/.exec(line)?.[1]
 
     if (opens !== undefined) {
@@ -209,7 +256,7 @@ export async function readUpliftUnits(
 
     const path = unit.dir === '' ? workingRoot : join(workingRoot, unit.dir)
     const tests = (await readTests(fs, path)) ?? observed.get(path) ?? null
-    const row = baseline?.rows.get(keyOf(unit.dir)) ?? null
+    const row = baselineRowOf(baseline, unit.dir)
     const state = stateOfUplift(tests, row, changed.has(unit.id))
 
     if (state !== 'untouched') {

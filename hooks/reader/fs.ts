@@ -5,7 +5,8 @@
  */
 export type ReaderFs = {
   read: (path: string) => Promise<string>
-  list: (path: string) => Promise<{ name: string; kind: 'file' | 'dir' | 'other'; size: number }[]>
+  /** An entry as it stands: a symbolic link is `other` (with `isLink`), whatever it leads to. `stat` says what that is. */
+  list: (path: string) => Promise<{ name: string; kind: 'file' | 'dir' | 'other'; size: number; isLink?: boolean }[]>
   exists: (path: string) => Promise<boolean>
   stat: (path: string) => Promise<{ kind: 'file' | 'dir' | 'other'; size: number; mtimeMs: number }>
 }
@@ -28,7 +29,7 @@ export async function readOrNull(fs: ReaderFs, path: string): Promise<string | n
 export async function listOrEmpty(
   fs: ReaderFs,
   path: string,
-): Promise<{ name: string; kind: 'file' | 'dir' | 'other'; size: number }[]> {
+): Promise<{ name: string; kind: 'file' | 'dir' | 'other'; size: number; isLink?: boolean }[]> {
   try {
     if (!(await fs.exists(path))) {
       return []
@@ -51,4 +52,28 @@ export async function mtimeOrNull(fs: ReaderFs, path: string): Promise<number | 
   } catch {
     return null
   }
+}
+
+/**
+ * The directories under `path`, by name. A symbolic link to a directory counts: the engine lists a link as `other`,
+ * and a legacy tree is often a link to where the code really lives.
+ */
+export async function dirNamesOf(fs: ReaderFs, path: string): Promise<string[]> {
+  const names: string[] = []
+
+  for (const entry of await listOrEmpty(fs, path)) {
+    if (entry.kind === 'dir') {
+      names.push(entry.name)
+    } else if (entry.kind === 'other') {
+      try {
+        if ((await fs.stat(`${path}/${entry.name}`)).kind === 'dir') {
+          names.push(entry.name)
+        }
+      } catch {
+        // a link that leads nowhere is not a system
+      }
+    }
+  }
+
+  return names
 }

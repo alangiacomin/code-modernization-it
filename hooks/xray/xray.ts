@@ -4,7 +4,7 @@ import { unitOfPath } from '../reader/estate-model'
 import type { Snapshot } from '../reader/progress'
 import type { Rule } from '../reader/rules'
 import { stateWord } from '../map/estate'
-import { baselineKeyOf } from '../reader/uplift'
+import { baselineRowOf } from '../reader/uplift'
 import { nodeOfFile, type TopoNode, type Topology } from '../reader/topology'
 
 /**
@@ -92,7 +92,7 @@ function upliftXray(snapshot: Snapshot, request: XrayRequest): XrayNote | null {
   const estate = snapshot.estate
   const unit = estate !== null ? unitOfPath(estate, null, request.fileRel) : null
   const deltas = (snapshot.uplift?.catalog?.byFileBase.get(baseName(request.fileRel).toLowerCase()) ?? []).map(id => plain(id, 24))
-  const row = unit?.dir !== undefined ? (snapshot.uplift?.baseline?.rows.get(baselineKeyOf(unit.dir)) ?? null) : null
+  const row = unit?.dir !== undefined ? baselineRowOf(snapshot.uplift?.baseline ?? null, unit.dir) : null
   const module = unit !== null ? snapshot.byNode.get(unit.id) : undefined
 
   if (deltas.length === 0 && row === null && module === undefined) {
@@ -238,7 +238,7 @@ export function xrayOf(snapshot: Snapshot, request: XrayRequest): XrayNote | nul
 
     if (verdicts.length > 0) {
       lines.push(
-        `A reviewer disputed: ${some(verdicts.map(entry => `${plain(entry.rule.id, 24)} (${plain(entry.review?.verdict, 16)})`), 6)}. Do not treat those as settled.`,
+        `A reviewer disputed: ${some(verdicts.map(entry => `${plain(entry.rule.id, 24)} (${plain(entry.review?.verdict, 16)})`), 6)}. A rule marked wrong is not an oracle to pin, and a P0 rule under discussion stops the build: do not treat any of these as settled.`,
       )
     }
   }

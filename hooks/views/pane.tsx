@@ -4,10 +4,12 @@
 import type { Elements, RenderChildren, RenderElement } from 'claude-code'
 
 import { lineOf, tallyOf } from '../fleet/fleet'
-import { countsOf, hexOf, STATE_COLORS, stateWord, type Tile } from '../map/estate'
-import { isUnitDone, type Snapshot } from '../reader/progress'
+import { countsOf, hexOf, PROOF_MARKS, proofCountsOf, STATE_COLORS, stateWord, type Tile, type TileState } from '../map/estate'
+import { frontDoorOf, isUnitDone, type Snapshot } from '../reader/progress'
 import { TRACK_LABELS, TRACK_UNITS } from '../reader/tracks'
 import { RASTER_KEY, type State } from '../state'
+import type { ProofState } from '../reader/verification'
+import { ACCENT, BAD, GOOD, HEAD, WARN } from './palette'
 
 /** The elements a pane draws with; `Raster` only where the surface has it (the terminal). */
 export type Kit = Pick<Elements['terminal'], 'Box' | 'Text' | 'Button'> &
@@ -58,9 +60,9 @@ function rule(kit: Kit, title: string, width: number, right = ''): RenderChildre
 
   return (
     <Box>
-      <Text bold color="cyan">{title}</Text>
+      <Text bold color={HEAD}>{title}</Text>
       <Text dimColor>{` ${'─'.repeat(fill)} `}</Text>
-      <Text color="yellow">{right}</Text>
+      <Text>{right}</Text>
     </Box>
   )
 }
@@ -84,9 +86,8 @@ function estateLine(snapshot: Snapshot): string {
 
   const noun = estate.granularity === 'build module' ? 'build module' : estate.granularity === 'module' ? 'module' : estate.granularity
   const count = `${estate.units.length.toLocaleString('en-US')} ${noun}${estate.units.length === 1 ? '' : 's'}`
-  const from = estate.source === 'map' ? '' : ' (read off the tree)'
 
-  return `${languages === '' ? '' : `${languages} · `}${count}${estate.isPartial ? '+' : ''}${from}`
+  return `${languages === '' ? '' : `${languages} · `}${count}${estate.isPartial ? '+' : ''}`
 }
 
 /** The rows the header takes: the title, the stage rail, the estate line and the progress bar. */
@@ -99,8 +100,7 @@ function header(kit: Kit, snapshot: Snapshot, width: number, actions: PaneAction
   const { Box, Text, Button } = kit
   const target = snapshot.brief?.target
   const percent = snapshot.percent
-  const measure = snapshot.estate?.measure === 'bytes' ? 'size' : 'loc'
-  const right = percent === null ? '' : `${(percent * 100).toFixed(percent < 0.1 ? 1 : 0)}% by ${measure}`
+  const right = percent === null ? '' : `${(percent * 100).toFixed(percent < 0.1 ? 1 : 0)}% done`
   const left = `${snapshot.system}${target !== undefined ? ` → ${target}` : ''}`
   const bar = barOf(percent ?? 0, Math.max(4, width - right.length - 1))
   const summary = estateLine(snapshot)
@@ -118,7 +118,7 @@ function header(kit: Kit, snapshot: Snapshot, width: number, actions: PaneAction
       </Box>
       <Box flexWrap="wrap">
         {snapshot.stages.map(stage => (
-          <Text color={stage.isDone ? 'green' : undefined} dimColor={!stage.isDone}>
+          <Text color={stage.isDone ? GOOD : undefined} dimColor={!stage.isDone}>
             {`${stage.isDone ? '✓' : '·'} ${stage.label} `}
           </Text>
         ))}
@@ -126,7 +126,7 @@ function header(kit: Kit, snapshot: Snapshot, width: number, actions: PaneAction
       {summary !== '' ? <Text dimColor wrap="truncate-end">{clip(summary, width)}</Text> : null}
       {percent !== null ? (
         <Box>
-          <Text color="green">{bar.full}</Text>
+          <Text color={GOOD}>{bar.full}</Text>
           <Text dimColor>{bar.rest}</Text>
           <Text>{` ${right}`}</Text>
         </Box>
@@ -157,6 +157,12 @@ function estate(kit: Kit, snapshot: Snapshot, frame: PaneFrame, width: number): 
           <Text>
             <Text color={hexOf(STATE_COLORS[entry.state])}>■</Text>
             <Text dimColor>{` ${stateWord(snapshot.track, entry.state)} ${entry.count}  `}</Text>
+          </Text>
+        ))}
+        {proofCountsOf(frame.estate.tiles).map(entry => (
+          <Text>
+            <Text color={entry.kind === 'proven' ? GOOD : entry.kind === 'partly' ? WARN : BAD} bold>{PROOF_MARKS[entry.kind]}</Text>
+            <Text dimColor>{` ${entry.kind === 'proven' ? 'proven' : entry.kind === 'partly' ? 'partly proven' : 'not proven'} ${entry.count}  `}</Text>
           </Text>
         ))}
       </Box>
@@ -193,13 +199,13 @@ function phases(kit: Kit, snapshot: Snapshot, width: number, max: number): Rende
         const done = isDone(phase.modules)
         const isCurrent = ordered[currentIndex] === phase && !done
         const ticked = phase.criteria.filter(criterion => criterion.isTicked).length
-        const right = `${phase.criteria.length > 0 ? `${ticked}/${phase.criteria.length} ☑ ` : ''}${pad(phase.size ?? '', 2)}`
+        const right = phase.criteria.length > 0 ? `${ticked}/${phase.criteria.length} checks` : ''
         const label = `${done ? '✓' : isCurrent ? '▸' : '·'} P${phase.number} ${phase.title}`
 
         return (
           <Box>
             <Text
-              color={done ? 'green' : isCurrent ? 'cyan' : undefined}
+              color={done ? GOOD : isCurrent ? HEAD : undefined}
               bold={isCurrent}
               dimColor={!done && !isCurrent}
             >
@@ -222,26 +228,46 @@ function orderOf(snapshot: Snapshot): Snapshot['modules'] {
     return [...snapshot.modules].sort((a, b) => b.mtimeMs - a.mtimeMs)
   }
 
-  const rank = (state: string) => (state === 'tests-red' ? 0 : state === 'scaffolded' ? 1 : state === 'tests-green' ? 2 : 3)
+  const rank = (state: string) => (state === 'tests-red' || state === 'tests-failing' ? 0 : state === 'scaffolded' ? 1 : state === 'tests-green' ? 2 : 3)
 
   return [...snapshot.modules].sort((a, b) => rank(a.state) - rank(b.state) || (b.tests?.tests ?? 0) - (a.tests?.tests ?? 0))
+}
+
+/** What a module's standing with the proof is called, and how it is drawn. Words as well as colour. */
+const CHIPS: Record<ProofState['state'], { text: string; color?: string; isBold?: boolean; isDim?: boolean }> = {
+  proven: { text: 'PROVEN', color: GOOD, isBold: true },
+  partly: { text: 'PARTLY PROVEN', color: WARN, isBold: true },
+  not: { text: 'NOT PROVEN', color: BAD, isBold: true },
+  changed: { text: 'changed since verified', color: WARN },
+  none: { text: 'not verified yet', isDim: true },
 }
 
 function modules(kit: Kit, snapshot: Snapshot, width: number, max: number): RenderChildren {
   const { Box, Text } = kit
   const all = orderOf(snapshot)
+  // An uplift is proven as one piece: its working copy has the one verdict, drawn as the first row.
+  const whole = snapshot.track === 'uplift' ? snapshot.proofs.get(`${snapshot.system}-uplifted`.toLowerCase()) : undefined
 
-  if (all.length === 0) {
+  if (all.length === 0 && whole === undefined) {
     return null
   }
+
+  const rows = Math.max(0, max - (whole !== undefined ? 1 : 0))
 
   return (
     <Box flexDirection="column">
       {rule(kit, TRACK_UNITS[snapshot.track].many, width, snapshot.track === 'reimagine' ? String(all.length) : `${snapshot.totals.done}/${snapshot.totals.modules}`)}
-      {all.slice(0, max).map(module => {
+      {whole !== undefined ? (
+        <Text wrap="truncate-end">
+          <Text dimColor>{'■ '}</Text>
+          <Text bold>the whole upgrade  </Text>
+          <Text color={CHIPS[whole.state].color} bold={CHIPS[whole.state].isBold === true} dimColor={CHIPS[whole.state].isDim === true}>{CHIPS[whole.state].text}</Text>
+        </Text>
+      ) : null}
+      {all.slice(0, rows).map(module => {
         const tests = module.tests
         const bad = tests === null ? 0 : tests.failures + tests.errors
-        const isWorse = module.state === 'tests-red'
+        const isWorse = module.state === 'tests-red' || module.state === 'tests-failing'
 
         // In an uplift a module may fail what the baseline already failed: red is only for what got worse.
         const testText =
@@ -250,27 +276,38 @@ function modules(kit: Kit, snapshot: Snapshot, width: number, max: number): Rend
             : isWorse
               ? snapshot.track === 'uplift'
                 ? `${bad} failing`
-                : `${bad}/${tests.tests} red`
+                : `${bad} of ${tests.tests} tests fail`
               : bad > 0 && snapshot.track !== 'uplift'
-                ? `${bad}/${tests.tests} red`
-                : `${tests.tests} ${snapshot.track === 'uplift' ? 'tests' : 'green'}`
+                ? `${bad} of ${tests.tests} tests fail`
+                : snapshot.track === 'uplift'
+                  ? `${tests.tests} tests`
+                  : `${tests.tests} tests pass`
 
+        const proof = snapshot.track === 'uplift' ? undefined : snapshot.proofs.get(module.dir.toLowerCase())
+        const chip = proof !== undefined ? CHIPS[proof.state] : undefined
         const color = hexOf(STATE_COLORS[module.state])
         const word = stateWord(snapshot.track, module.state)
-        const name = clip(module.dir, Math.max(8, width - word.length - testText.length - 5))
+
+        // One row, and the proof is the last thing to give way: the test counts go first, then the name is cut.
+        const room = width - 2 - (2 + word.length) - (chip !== undefined ? 2 + chip.text.length : 0)
+        const shownTests = testText !== '' && 8 + 2 + testText.length <= room ? testText : ''
+        const name = clip(module.dir, Math.max(4, room - (shownTests !== '' ? 2 + shownTests.length : 0)))
 
         return (
-          <Box>
+          <Text wrap="truncate-end">
             <Text color={color}>■ </Text>
             <Text bold>{name}</Text>
             <Text dimColor>{`  ${word}`}</Text>
-            <Text color={isWorse || (bad > 0 && snapshot.track !== 'uplift') ? 'red' : 'green'}>
-              {testText === '' ? '' : `  ${testText}`}
+            <Text color={isWorse || (bad > 0 && snapshot.track !== 'uplift') ? BAD : GOOD}>
+              {shownTests === '' ? '' : `  ${shownTests}`}
             </Text>
-          </Box>
+            {chip !== undefined ? (
+              <Text color={chip.color} bold={chip.isBold === true} dimColor={chip.isDim === true}>{`  ${chip.text}`}</Text>
+            ) : null}
+          </Text>
         )
       })}
-      {all.length > max ? <Text dimColor>{`  … ${all.length - max} more`}</Text> : null}
+      {all.length > rows ? <Text dimColor>{`  … ${all.length - rows} more`}</Text> : null}
     </Box>
   )
 }
@@ -284,28 +321,26 @@ function session(kit: Kit, state: State, frame: PaneFrame, width: number, max: n
   const status = activity.isWorking
     ? `● working ${ago(frame.nowMs - activity.turnStartMs)}`
     : fleet.active > 0
-      ? `● ${fleet.active} agents working`
+      ? `● ${fleet.active} agent${fleet.active === 1 ? '' : 's'} working`
       : '○ idle'
 
   const running = [...activity.running.values()]
     .filter(call => call.agentId === undefined)
     .sort((a, b) => a.startMs - b.startMs)
 
-  const share = activity.toolMs > 0 ? Math.round((activity.testMs / activity.toolMs) * 100) : 0
-
   // Rows in the order they matter; the block draws as many as it was given.
   const rows: RenderChildren[] = []
 
   if (activity.step !== null) {
-    rows.push(<Text color="cyan" wrap="truncate-end">{clip(`  ${activity.step}`, width)}</Text>)
+    rows.push(<Text color={HEAD} wrap="truncate-end">{clip(`  ${activity.step}`, width)}</Text>)
   }
 
   if (fleet.total > 0) {
     rows.push(
       <Text wrap="truncate-end">
-        <Text color="cyan">{'  ⛭ '}</Text>
-        <Text>{`${fleet.active} agents active`}</Text>
-        <Text dimColor>{` · ${fleet.done}/${fleet.total} done · ${fleet.calls} calls${fleet.errors > 0 ? ` · ${fleet.errors} errors` : ''}${fleet.stalled > 0 ? ` · ${fleet.stalled} quiet` : ''}`}</Text>
+        <Text color={HEAD}>{'  ◆ '}</Text>
+        <Text>{`${fleet.active} agent${fleet.active === 1 ? '' : 's'} active`}</Text>
+        <Text dimColor>{` · ${fleet.done}/${fleet.total} done · ${fleet.calls} calls${fleet.errors > 0 ? ` · ${fleet.errors} error${fleet.errors === 1 ? '' : 's'}` : ''}${fleet.stalled > 0 ? ` · ${fleet.stalled} stalled` : ''}`}</Text>
       </Text>,
     )
   }
@@ -313,17 +348,14 @@ function session(kit: Kit, state: State, frame: PaneFrame, width: number, max: n
   for (const call of running.slice(-2)) {
     rows.push(
       <Box>
-        <Text color="yellow">{'  ◌ '}</Text>
+        <Text color={HEAD}>{'  ● '}</Text>
         <Text>{pad(clip(`${call.tool} ${call.subject}`, width - 10), width - 10)}</Text>
         <Text dimColor>{` ${ago(frame.nowMs - call.startMs)}`}</Text>
       </Box>,
     )
   }
 
-  const summary = [
-    activity.xrays > 0 ? `x-ray notes ${activity.xrays}` : '',
-    activity.testRuns > 0 ? `tests ${share}% of tool time (${activity.testRuns} runs)` : '',
-  ].filter(part => part !== '')
+  const summary = [activity.xrays > 0 ? `x-ray: notes from the analysis went with ${activity.xrays} read${activity.xrays === 1 ? '' : 's'}` : ''].filter(part => part !== '')
 
   const tail: RenderChildren[] = summary.length > 0 ? [<Text dimColor wrap="truncate-end">{clip(`  ${summary.join(' · ')}`, width)}</Text>] : []
   const room = Math.max(0, max - rows.length - tail.length)
@@ -340,7 +372,7 @@ function session(kit: Kit, state: State, frame: PaneFrame, width: number, max: n
   for (const call of activity.finished.slice(-Math.max(0, max - rows.length - tail.length))) {
     rows.push(
       <Box>
-        <Text color={call.isOk ? 'green' : 'red'}>{call.isOk ? '  ✓ ' : '  ✗ '}</Text>
+        <Text color={call.isOk ? GOOD : BAD}>{call.isOk ? '  ✓ ' : '  ✗ '}</Text>
         <Text dimColor wrap="truncate-end">{clip(`${call.tool} ${call.subject}${call.note !== undefined ? ` · ${call.note}` : ''}`, width - 4)}</Text>
       </Box>,
     )
@@ -368,11 +400,81 @@ function attention(kit: Kit, state: State, snapshot: Snapshot, width: number, ma
     <Box flexDirection="column">
       {rule(kit, 'Attention', width, String(lines.length))}
       {lines.slice(0, max).map(line => (
-        <Text color="yellow" wrap="truncate-end">{clip(`  ! ${line}`, width)}</Text>
+        <Text color={WARN} wrap="truncate-end">{clip(`  ! ${line}`, width)}</Text>
       ))}
       {lines.length > max ? <Text dimColor>{`  … ${lines.length - max} more`}</Text> : null}
     </Box>
   )
+}
+
+/** The buttons under the Next line, by their labels, in the order they are drawn. */
+function buttonsOf(snapshot: Snapshot, state: State): string[] {
+  const next = snapshot.next
+
+  return [
+    ...(next !== null && !next.isByHand ? ['put in prompt'] : []),
+    ...(next?.action === 'sign' ? ['sign the brief'] : []),
+    ...((snapshot.rules?.rules.length ?? 0) > 0 ? ['review rules'] : []),
+    ...(state.activity.isWorking && state.fleet.seen > 0 ? ['stop the run'] : []),
+    'refresh',
+  ]
+}
+
+/** The rows the legend under the map takes at `width`: it wraps, and a wrapped legend must not spill out of the body. */
+export function legendRowsOf(snapshot: Snapshot | null, width: number): number {
+  if (snapshot === null || snapshot.estate === null) {
+    return 1
+  }
+
+  const states = new Set<TileState>()
+  const proofs = new Set<string>()
+
+  for (const module of snapshot.byNode.values()) {
+    states.add(module.state)
+
+    const proof = snapshot.track === 'uplift' ? undefined : snapshot.proofs.get(module.dir.toLowerCase())?.state
+
+    if (proof === 'proven' || proof === 'partly' || proof === 'not') {
+      proofs.add(proof)
+    }
+  }
+
+  if (snapshot.byNode.size < snapshot.estate.units.length) {
+    states.add('untouched')
+  }
+
+  // '■ word 123  ' per state; '✓ word 123  ' per proof.
+  const widths = [
+    ...[...states].map(state => 3 + stateWord(snapshot.track, state).length + 5),
+    ...[...proofs].map(kind => 3 + (kind === 'proven' ? 6 : kind === 'partly' ? 13 : 10) + 5),
+  ]
+
+  let rows = 1
+  let used = 0
+
+  for (const entry of widths) {
+    if (used > 0 && used + entry > width) {
+      rows += 1
+      used = 0
+    }
+
+    used += entry
+  }
+
+  return rows
+}
+
+/** The rows the Next block takes at `width`, without the hint: its title, the command (wrapped), the reason, a blank row and the buttons. */
+export function nextRowsOf(snapshot: Snapshot | null, state: State, width: number): number {
+  if (snapshot === null) {
+    return 5
+  }
+
+  const next = snapshot.next
+  const command = next === null ? 1 : Math.max(1, Math.ceil((next.text.length + (next.isByHand && next.action === undefined ? 12 : 0) + 2) / Math.max(10, width)))
+  const buttons = Math.max(1, Math.ceil(buttonsOf(snapshot, state).reduce((sum, label) => sum + label.length + 5, 0) / Math.max(10, width + 1)))
+
+  return 1 + command + 1 + 1 + buttons
 }
 
 function nextBlock(
@@ -392,8 +494,8 @@ function nextBlock(
       {rule(kit, 'Next', width)}
       {next !== null ? (
         <Box flexDirection="column" paddingLeft={2}>
-          <Text color={next.isByHand ? undefined : 'cyan'} bold={!next.isByHand} wrap="truncate-end">
-            {`${next.text}${next.isByHand ? '  (by hand)' : ''}`}
+          <Text color={next.isByHand ? undefined : ACCENT} bold={!next.isByHand} wrap="wrap">
+            {`${next.text}${next.isByHand && next.action === undefined ? '  (by hand)' : ''}`}
           </Text>
           <Text dimColor wrap="truncate-end">{next.reason}</Text>
         </Box>
@@ -402,15 +504,16 @@ function nextBlock(
       )}
       <Box marginTop={1} flexWrap="wrap" columnGap={1}>
         {next !== null && !next.isByHand ? (
-          <Button key="next" onPress={actions.next}>next</Button>
+          <Button key="next" onPress={actions.next}>put in prompt</Button>
         ) : null}
+        {next?.action === 'sign' ? <Button key="sign" onPress={actions.sign}>sign the brief</Button> : null}
         {hasRules ? <Button key="review" onPress={actions.review}>review rules</Button> : null}
         {state.activity.isWorking && state.fleet.seen > 0 ? (
           <Button key="stop" onPress={actions.stop}>stop the run</Button>
         ) : null}
         <Button key="refresh" dimColor onPress={actions.refresh}>refresh</Button>
       </Box>
-      {hasHint ? <Text dimColor>{'click, or ctrl+x tab then tab and enter'}</Text> : null}
+      {hasHint ? <Text dimColor wrap="truncate-end">{clip('click a button, or ctrl+x tab then Tab, Enter', width)}</Text> : null}
     </Box>
   )
 }
@@ -436,8 +539,11 @@ export type PanePlan = {
 export function planOf(
   rows: number,
   placement: 'dock' | 'inline',
-  counts: { phases: number; modules: number; attention: number; hasMap: boolean; headerRows: number },
+  counts: { phases: number; modules: number; attention: number; hasMap: boolean; headerRows: number; nextRows?: number; legendRows?: number },
 ): PanePlan {
+  const nextRows = counts.nextRows ?? 5
+  const legendRows = counts.legendRows ?? 1
+
   if (placement === 'inline') {
     return {
       estate: counts.hasMap ? Math.max(4, Math.min(6, rows - 6 - counts.headerRows)) : 0,
@@ -451,7 +557,7 @@ export function planOf(
   }
 
   const gap: 0 | 1 = rows >= 52 ? 1 : 0
-  const hasHint = rows >= 44
+  const hasHint = rows >= 36
   const attention = Math.min(counts.attention, rows >= 40 ? 3 : 2)
   const modules = Math.min(counts.modules, rows >= 48 ? 3 : rows >= 38 ? 2 : 1)
   const sessionMin = rows >= 40 ? 4 : 3
@@ -459,8 +565,8 @@ export function planOf(
   // header · legend 1 · next: title, command, reason, blank, buttons (+hint)
   const fixed =
     counts.headerRows +
-    (counts.hasMap ? 1 : 0) +
-    (5 + (hasHint ? 1 : 0)) +
+    (counts.hasMap ? legendRows : 0) +
+    (nextRows + (hasHint ? 1 : 0)) +
     (attention > 0 ? 1 + attention : 0) +
     (modules > 0 ? 1 + modules : 0) +
     (1 + sessionMin) +
@@ -469,7 +575,7 @@ export function planOf(
   const blocks = 3 + (counts.hasMap ? 1 : 0) + (attention > 0 ? 1 : 0) + (modules > 0 ? 1 : 0) + (counts.phases > 0 ? 1 : 0)
   const spare = Math.max(0, rows - fixed - gap * (blocks - 1))
   const phases = counts.phases > 0 ? Math.max(1, Math.min(counts.phases, Math.floor(spare * 0.3))) : 0
-  const estate = counts.hasMap ? Math.max(4, Math.min(16, spare - phases - (counts.phases > phases ? 1 : 0))) : 0
+  const estate = counts.hasMap ? Math.max(4, Math.min(24, spare - phases - (counts.phases > phases ? 1 : 0))) : 0
   const left = Math.max(0, spare - phases - estate - (counts.phases > phases ? 1 : 0))
 
   const plan: PanePlan = { estate, phases, modules, attention, session: sessionMin + Math.min(4, left), gap, hasHint }
@@ -477,10 +583,10 @@ export function planOf(
   // A body too short for even the minimums sheds rows in the order they matter least.
   const totalOf = (p: PanePlan) =>
     counts.headerRows +
-    (p.estate > 0 ? p.estate + 1 : 0) +
+    (p.estate > 0 ? p.estate + legendRows : 0) +
     (p.phases > 0 ? 1 + p.phases + (counts.phases > p.phases ? 1 : 0) : 0) +
     (p.modules > 0 ? 1 + p.modules + (counts.modules > p.modules ? 1 : 0) : 0) +
-    (5 + (p.hasHint ? 1 : 0)) +
+    (nextRows + (p.hasHint ? 1 : 0)) +
     (p.attention > 0 ? 1 + p.attention + (counts.attention > p.attention ? 1 : 0) : 0) +
     (1 + p.session)
 
@@ -519,13 +625,20 @@ export function paneView(
 
   if (snapshot === null) {
     return (
-      <Box flexDirection="column" paddingRight={1}>
-        <Text bold>modernization</Text>
-        <Text dimColor wrap="wrap">
-          {state.readError !== null
-            ? `could not read the workspace: ${state.readError}`
-            : 'no system found under legacy/ or analysis/ yet. Put the system under legacy/<name>/ and run the preflight command to begin.'}
-        </Text>
+      <Box flexDirection="column" paddingRight={1} rowGap={1}>
+        <Text bold>Modernization</Text>
+        {state.readError !== null ? (
+          <Text dimColor wrap="wrap">{`could not read the workspace: ${state.readError}`}</Text>
+        ) : (
+          <Box flexDirection="column">
+            <Text wrap="wrap">Nothing to show yet: no legacy code under legacy/ and no analysis under analysis/.</Text>
+            <Text wrap="wrap">
+              <Text>To begin, type </Text>
+              <Text bold color={ACCENT}>{frontDoorOf(state.options.commandPrefix)}</Text>
+              <Text>. It asks what you want done with your code, finds it, and gives you the first step.</Text>
+            </Text>
+          </Box>
+        )}
       </Box>
     )
   }

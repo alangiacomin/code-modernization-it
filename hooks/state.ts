@@ -70,10 +70,6 @@ export type Activity = {
   step: string | null
   running: Map<string, RunningCall>
   finished: FinishedCall[]
-  /** Milliseconds the main loop spent in tool calls, and in those that ran tests. */
-  toolMs: number
-  testMs: number
-  testRuns: number
   xrays: number
   xraysThisTurn: number
 }
@@ -85,6 +81,11 @@ export type DeckState = {
   queue: Rule[]
   index: number
   ledger: ReviewLedger
+  /**
+   * What this session set each rule to (null: its verdict taken back). The file is read again before it is written, and
+   * these are laid on top of it, so a verdict the other writer (the review command) put there meanwhile is not lost.
+   */
+  edits: Map<string, ReviewLedger[string] | null>
   /** The source lines of the card in view, once asked for. */
   source: { ruleId: string; path: string; startLine: number; text: string } | null
   isSourceShown: boolean
@@ -110,7 +111,10 @@ export type State = {
   isRefreshQueued: boolean
   timers: Map<string, Timer>
   pane: {
+    /** Open and drawn. An open the engine holds back (unasked, on a terminal too narrow to dock a pane) is not this. */
     isOpen: boolean
+    /** The engine holds the pane undrawn until the person asks for it or the terminal widens. */
+    isWaiting: boolean
     isClosedByPerson: boolean
     bodyColumns: number
     bodyRows: number
@@ -137,9 +141,6 @@ export const newActivity = (): Activity => ({
   step: null,
   running: new Map(),
   finished: [],
-  toolMs: 0,
-  testMs: 0,
-  testRuns: 0,
   xrays: 0,
   xraysThisTurn: 0,
 })
@@ -156,7 +157,7 @@ export function newState(raw: PluginOptions): State {
     isRefreshing: false,
     isRefreshQueued: false,
     timers: new Map(),
-    pane: { isOpen: false, isClosedByPerson: false, bodyColumns: 48, bodyRows: 30, placement: 'dock' },
+    pane: { isOpen: false, isWaiting: false, isClosedByPerson: false, bodyColumns: 48, bodyRows: 30, placement: 'dock' },
     viewport: { columns: null, isFullscreen: null },
     activity: newActivity(),
     touches: new Map(),
@@ -171,6 +172,7 @@ export function newState(raw: PluginOptions): State {
       queue: [],
       index: 0,
       ledger: {},
+      edits: new Map(),
       source: null,
       isSourceShown: false,
     },

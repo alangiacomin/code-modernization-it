@@ -98,7 +98,10 @@ describe('start and pane', () => {
     await clock.advance(200)
 
     expect(world.opened).toEqual([])
-    expect(textOf(await $.ui.render(PANE))).toContain('no system found under legacy/ or analysis/')
+    const empty = textOf(await $.ui.render(PANE))
+
+    expect(empty).toContain('Nothing to show yet')
+    expect(empty, 'a first-time user is told the one command to type').toContain('To begin, type /code-modernization:modernize.')
   })
 
   test('the pane draws the system, its stages, phases, the transformed module and the next step', async ($, on) => {
@@ -116,8 +119,8 @@ describe('start and pane', () => {
     expect(text).toContain('· harden')
     expect(text).toContain('P1 Interest pilot (D1)')
     expect(text).toContain('INTCALC')
-    expect(text).toContain('12 green')
-    expect(text).toContain('/code-modernization:modernize-status billing')
+    expect(text).toContain('12 tests pass')
+    expect(text, 'built and reviewed, and nothing has checked it: verify comes before anything else').toContain('/code-modernization:modernize-verify billing INTCALC')
 
     const raster = elementsOf(tree, 'Raster')[0] as { props: { columns: number; rows: number; cells: string } } | undefined
 
@@ -144,6 +147,64 @@ describe('start and pane', () => {
       tests: { tests: 12, failures: 0, errors: 0, skipped: 0, reports: 1 },
       reviewDate: '2026-09-15',
     })
+  })
+
+  test('an unsigned brief is a step the pane can take: a button opens the sign-off dialog, and the prompt is left alone', async ($, on) => {
+    const world = worldOf(on, UNSIGNED)
+
+    mock.clock(on)
+    await $.session.start(SESSION)
+
+    const tree = await $.ui.render(PANE)
+    const labels = elementsOf(tree, 'Button').map(button => (button as { props: { label?: string } }).props.label)
+
+    expect(textOf(tree)).toContain('approve the brief')
+    expect(textOf(tree), 'no by-hand tag on a step the pane does itself').not.toContain('(by hand)')
+    expect(labels).toContain('sign the brief')
+    expect(labels, 'nothing to paste into the prompt').not.toContain('put in prompt')
+
+    await $.ui.press({ plugin: NAME, key: 'sign' })
+    expect(world.opened.at(-1)).toEqual({ id: 'modernize-sign', focus: true })
+    expect(world.fills).toEqual([])
+  })
+
+  test('a workspace nobody has started is sent to the front door, and its button puts that command in the prompt', async ($, on) => {
+    const world = worldOf(on, { 'legacy/billing/app/cbl/INTCALC.cbl': 'x' })
+
+    mock.clock(on)
+    await $.session.start(SESSION)
+    await $.command.run(command('modernize-panel'))
+
+    const text = textOf(await $.ui.render(PANE))
+
+    expect(text).toContain('/code-modernization:modernize billing')
+    expect(text).toContain('start here')
+    await $.ui.press({ plugin: NAME, key: 'next' })
+    expect(world.fills).toEqual(['/code-modernization:modernize billing'])
+  })
+
+  test('the pane and the deck draw in theme colours and hex, never in ANSI names that fade on a light background', async ($, on) => {
+    worldOf(on, FULL)
+    mock.clock(on)
+    on('tool.call', ($, e) => (e.tool === 'Bash' ? { isError: true as const, result: 'x', text: 'error: the same thing broke here' } : { result: 'x', text: 'x' }))
+    await $.session.start(SESSION)
+    await $.turn.start({ text: '/code-modernization:modernize-transform billing INTCALC java', turnId: 't1' })
+
+    for (const agentId of ['w1', 'w2', 'w3']) {
+      await $.tool.call({ tool: 'Bash', command: 'mvn -q test', agentId } as never)
+    }
+
+    await $.command.run(command('modernize-review', 'all'))
+
+    const allowed = /^(#[0-9a-f]{6}|suggestion|success|error|warning|claude|inactive|subtle|text)$/
+
+    for (const tree of [await $.ui.render(PANE), await $.ui.render(BAND), await $.ui.render({ ...BAND, props: { ...BAND.props, maxRows: 30 } })]) {
+      for (const text of elementsOf(tree, 'Text') as { props?: { color?: string } }[]) {
+        const color = text.props?.color
+
+        expect(color === undefined || allowed.test(color), `text drawn in ${String(color)}`).toBe(true)
+      }
+    }
   })
 
   test('the next button puts the next command in the prompt box, never runs it', async ($, on) => {
@@ -325,6 +386,27 @@ describe('fleet', () => {
   })
 })
 
+describe('a busy fleet', () => {
+  test('agents that keep writing do not starve the pane\'s read of the disk: it is read about every interval, not once they stop', async ($, on) => {
+    const world = worldOf(on, FULL)
+    const clock = mock.clock(on)
+
+    on('tool.call', () => ({ result: 'x', text: 'x' }))
+    await $.session.start(SESSION)
+    expect(textOf(await $.ui.render(PANE))).toContain('· harden')
+
+    world.put('analysis/billing/SECURITY_FINDINGS.md', '# Findings')
+
+    // A call every 300 ms for two and a half seconds: never a quiet gap of the 450 ms a debounce would wait for.
+    for (let step = 0; step < 8; step += 1) {
+      await $.tool.call({ tool: 'Bash', command: 'ls' })
+      await clock.advance(300)
+    }
+
+    expect(textOf(await $.ui.render(PANE)), 'read while the calls were still coming').toContain('✓ harden')
+  })
+})
+
 describe('review deck', () => {
   test('/modernize-review draws the first flagged card in the band, and a digit decides it', async ($, on) => {
     const world = worldOf(on, FULL)
@@ -339,7 +421,7 @@ describe('review deck', () => {
     const card = await $.ui.render(BAND)
     const text = textOf(card)
 
-    expect(text).toContain('1/2')
+    expect(text).toContain('1 of 2')
     expect(text).toContain('P0-002 · Missing rate row aborts the run')
     expect(text).toContain('For an SME')
     expect(stringsOf(card).filter(part => part === 'confirm').length).toBe(1)
@@ -355,9 +437,9 @@ describe('review deck', () => {
 
     const next = textOf(await $.ui.render(BAND))
 
-    expect(next).toContain('2/2')
+    expect(next).toContain('2 of 2')
     expect(next).toContain('P0-001')
-    expect(next).toContain('✗ 1')
+    expect(next).toContain('1 wrong')
   })
 
   test('the card never draws more rows than the band has, source shown or not', async ($, on) => {
@@ -375,6 +457,50 @@ describe('review deck', () => {
       expect(rowsOf(await $.ui.render(input)) <= maxRows, `card with source fits ${maxRows} rows`).toBe(true)
       await $.ui.press({ plugin: NAME, key: 'source' })
     }
+  })
+
+  test('a note the review command recorded is on the card, survives a new verdict from the deck, and what the command wrote meanwhile is kept', async ($, on) => {
+    const long = 'What should happen when the rate row is missing? '.repeat(20)
+    const command1 = { verdict: 'discuss', at: '2026-09-16T10:00:00Z', title: 'Missing rate row aborts the run', note: long }
+    const file = (reviews: Record<string, unknown>) => JSON.stringify({ system: 'billing', version: 1, reviews })
+    const world = worldOf(on, { ...FULL, 'analysis/billing/RULE_REVIEWS.json': file({ 'P0-002': command1 }) })
+    const clock = mock.clock(on)
+
+    on('ui.render', () => ({ type: 'Text', children: ['engine'] }))
+    await $.session.start(SESSION)
+    await $.command.run(command('modernize-review', 'all'))
+    await $.ui.render(BAND)
+    await $.ui.press({ plugin: NAME, key: 'prev' })
+
+    for (const maxRows of [12, 16, 20, 30]) {
+      const input = { ...BAND, props: { ...BAND.props, maxRows } }
+      const card = await $.ui.render(input)
+
+      expect(textOf(card), `card at ${maxRows} rows`).toContain('Note: What should happen when the rate row is missing?')
+      expect(rowsOf(card) <= maxRows, `card with a note fits ${maxRows} rows (drew ${rowsOf(card)})`).toBe(true)
+      expect(stringsOf(card).filter(part => part.startsWith('What should happen')).every(part => part.length <= 500)).toBe(true)
+
+      await $.ui.press({ plugin: NAME, key: 'source' })
+      await clock.settle()
+      expect(rowsOf(await $.ui.render(input)) <= maxRows, `card with a note and the source fits ${maxRows} rows`).toBe(true)
+      await $.ui.press({ plugin: NAME, key: 'source' })
+    }
+
+    // Meanwhile the review command records another rule; then the deck confirms this one.
+    world.put('analysis/billing/RULE_REVIEWS.json', file({ 'P0-002': command1, 'R-99': { verdict: 'wrong', at: '2026-09-17T09:00:00Z', title: 'Other', note: 'their words' } }))
+    await $.ui.press({ plugin: NAME, key: 'confirm' })
+    await clock.settle()
+
+    const written = JSON.parse(world.writes.filter(write => write.path === 'analysis/billing/RULE_REVIEWS.json').at(-1)?.text ?? '{}') as { reviews: Record<string, { verdict: string; note?: string }> }
+
+    expect(written.reviews['P0-002']?.verdict).toBe('confirmed')
+    expect(written.reviews['P0-002']?.note?.startsWith('What should happen'), 'the reviewer\'s words are still there').toBe(true)
+    expect(written.reviews['R-99'], 'what the command wrote meanwhile is not lost').toMatchObject({ verdict: 'wrong', note: 'their words' })
+
+    const page = world.writes.filter(write => write.path === 'analysis/billing/RULE_REVIEWS.md').at(-1)?.text ?? ''
+
+    expect(page).toContain('| Rule | Verdict | When | Title | Note |')
+    expect(page).toContain('| R-99 | Wrong |')
   })
 
   test('close hands the band back', async ($, on) => {
@@ -404,7 +530,7 @@ describe('signing', () => {
 
     const dialog = await $.ui.render(SIGN_PANE)
 
-    expect(textOf(dialog)).toContain('treat an unsigned brief as not approved')
+    expect(textOf(dialog)).toContain('Nothing is built until it is signed')
     expect(textOf(dialog)).toContain('1 open question')
 
     await $.ui.press({ plugin: NAME, key: 'do-sign' })
@@ -448,7 +574,7 @@ describe('prompt context', () => {
     const first = await $.prompt.submit({ text: 'hello', wait: false, origin: { kind: 'composer' } })
     const second = await $.prompt.submit({ text: 'again', wait: false, origin: { kind: 'composer' } })
 
-    expect((first.context ?? []).join(' ')).toContain('billing: discovery 5/5 · brief approved · 1/3 modules reviewed')
+    expect((first.context ?? []).join(' ')).toContain('billing: analysis 5/5 steps done · brief approved · 1 of 3 modules reviewed')
     expect(second.context, 'unchanged: not attached again').toBe(undefined)
   })
 })

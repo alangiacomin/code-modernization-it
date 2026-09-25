@@ -1,4 +1,5 @@
 import { baseName } from '../paths'
+import { linesOf } from '../text'
 
 /**
  * `analysis/<system>/BUSINESS_RULES.md`, read into rule cards.
@@ -112,7 +113,7 @@ const priorityOf = (id: string, body: string): string => {
   }
 
   // `P0` · Calculation · confidence High · `app/cbl/A.cbl:10-20`
-  const header = body.split('\n').find(line => line.trim() !== '') ?? ''
+  const header = linesOf(body).find(line => line.trim() !== '') ?? ''
 
   return /^\s*`?\**(P\d)\**`?\s*(?:·|$)/.exec(header)?.[1] ?? ''
 }
@@ -132,7 +133,7 @@ const gwtOf = (body: string, word: string): string | undefined => {
 }
 
 const markedOf = (body: string, marker: RegExp): string | undefined => {
-  for (const line of body.split('\n')) {
+  for (const line of linesOf(body)) {
     if (marker.test(line)) {
       const text = clean(line.replace(/^>\s*/, '').replace(marker, ''))
         .replace(/^[—–-]\s*/, '')
@@ -162,7 +163,7 @@ const specOf = (body: string): { given?: string; when?: string; then?: string } 
   const clauses: Record<'given' | 'when' | 'then', string[]> = { given: [], when: [], then: [] }
   let current: 'given' | 'when' | 'then' | undefined
 
-  for (const raw of block.split('\n')) {
+  for (const raw of linesOf(block)) {
     const line = raw.trim().replace(/^```\w*$/, '').replace(/^[-*]\s+/, '')
     const match = /^(Given|When|Then|And)\s+(.*)$/.exec(line)
 
@@ -196,7 +197,7 @@ function cardOf(
   body: string,
   domain: string | undefined,
 ): Rule {
-  const lines = body.split('\n')
+  const lines = linesOf(body)
   const header = lines.find(line => line.trim() !== '') ?? ''
   const headerParts = header.split('·').map(part => clean(part))
 
@@ -337,7 +338,7 @@ function rowOf(
 
 /** Parses BUSINESS_RULES.md. Never throws; an unreadable file is no rules. */
 export function parseRules(text: string): RuleSet {
-  const lines = text.split('\n')
+  const lines = linesOf(text)
   const rules: Rule[] = []
   let domain: string | undefined
   /** Set by a top-level heading: `# P1 rules` gives its rows a priority, an index or appendix is skipped. */

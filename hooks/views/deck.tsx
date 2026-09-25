@@ -7,6 +7,7 @@ import type { ReviewVerdict } from '../reader/progress'
 import { tallyOf } from '../review/deck'
 import type { DeckState, SignState } from '../state'
 import type { Kit } from './pane'
+import { BAD, GOOD, HEAD, WARN } from './palette'
 
 export type DeckActions = {
   decide: (verdict: ReviewVerdict) => void
@@ -17,13 +18,13 @@ export type DeckActions = {
   close: () => void
 }
 
-const SCOPE_WORDS = { flagged: 'P0 rules flagged for a person', p0: 'all P0 rules', all: 'all rules' }
-const SCOPE_SHORT = { flagged: 'flagged P0', p0: 'P0', all: 'all' }
+const SCOPE_WORDS = { flagged: 'high-priority rules a person should check', p0: 'all high-priority rules', all: 'all rules' }
+const SCOPE_SHORT = { flagged: 'flagged', p0: 'high-priority', all: 'all' }
 
 const VERDICT_COLORS: Record<ReviewVerdict, string> = {
-  confirmed: 'green',
-  wrong: 'red',
-  discuss: 'yellow',
+  confirmed: GOOD,
+  wrong: BAD,
+  discuss: WARN,
 }
 
 /** `text` word-wrapped to `width` cells, at most `maxLines` rows, the last ending in an ellipsis when cut. */
@@ -98,9 +99,9 @@ export function deckView(
   if (rule === undefined) {
     return (
       <Box flexDirection="column">
-        <Text bold color="cyan">Rule review</Text>
+        <Text bold color={HEAD}>Rule review</Text>
         <Text dimColor wrap="truncate-end">
-          {`Nothing to review under "${SCOPE_WORDS[deck.scope]}"${deck.filter !== '' ? ` matching "${deck.filter}"` : ''}. Try /modernize-review all.`}
+          {`Nothing to review among ${SCOPE_WORDS[deck.scope]}${deck.filter !== '' ? ` matching "${deck.filter}"` : ''}. Try /modernize-review all.`}
         </Text>
         <Button key="close" hotkey="0" plain onPress={actions.close}>close</Button>
       </Box>
@@ -113,7 +114,7 @@ export function deckView(
 
   const meta = [
     rule.domain,
-    rule.category,
+    rule.category !== undefined && rule.category.toLowerCase() === rule.domain?.toLowerCase() ? undefined : rule.category,
     rule.confidence !== undefined ? `confidence ${rule.confidence}` : undefined,
     first !== undefined ? `${first.path.split('/').pop()}:${first.from}${first.to !== first.from ? `-${first.to}` : ''}` : undefined,
   ].filter((part): part is string => part !== undefined && part !== '')
@@ -133,22 +134,33 @@ export function deckView(
 
   const verdictLine =
     verdict !== undefined ? (
-      <Text color={VERDICT_COLORS[verdict.verdict]} bold>{`Verdict: ${verdict.verdict} (${verdict.at.slice(0, 10)})`}</Text>
+      <Text color={VERDICT_COLORS[verdict.verdict]} bold>{`Your verdict: ${verdict.verdict} (${verdict.at.slice(0, 10)})`}</Text>
     ) : (
-      <Text dimColor>Verdict: none yet</Text>
+      <Text dimColor>Is this rule right? No verdict yet.</Text>
     )
+
+  // The reviewer's own words, when they gave any (the review command records them): one line, cut short.
+  const noteLine =
+    verdict?.note !== undefined ? (
+      <Text wrap="truncate-end">
+        <Text dimColor>Note: </Text>
+        <Text>{verdict.note}</Text>
+      </Text>
+    ) : null
+
+  const noteRows = noteLine === null ? 0 : 1
 
   const headline = (
     <Text wrap="truncate-end">
-      <Text bold color="cyan">Rule review</Text>
-      <Text bold>{` ${deck.index + 1}/${tally.total}`}</Text>
-      <Text dimColor>{'  '}</Text>
-      <Text color="green">{`✓ ${tally.confirmed}`}</Text>
-      <Text dimColor>{'  '}</Text>
-      <Text color="red">{`✗ ${tally.wrong}`}</Text>
-      <Text dimColor>{'  '}</Text>
-      <Text color="yellow">{`? ${tally.discuss}`}</Text>
-      <Text dimColor>{`  ${tally.open} open · ${width < 96 ? SCOPE_SHORT[deck.scope] : SCOPE_WORDS[deck.scope]}${deck.filter !== '' ? ` · "${deck.filter}"` : ''}`}</Text>
+      <Text bold color={HEAD}>Rule review</Text>
+      <Text bold>{` ${deck.index + 1} of ${tally.total}`}</Text>
+      <Text dimColor>{' · '}</Text>
+      <Text color={GOOD}>{`${tally.confirmed} confirmed`}</Text>
+      <Text dimColor>{' · '}</Text>
+      <Text color={BAD}>{`${tally.wrong} wrong`}</Text>
+      <Text dimColor>{' · '}</Text>
+      <Text color={WARN}>{`${tally.discuss} to discuss`}</Text>
+      <Text dimColor>{` · ${tally.open} open · ${width < 96 ? SCOPE_SHORT[deck.scope] : SCOPE_WORDS[deck.scope]}${deck.filter !== '' ? ` · "${deck.filter}"` : ''}`}</Text>
     </Text>
   )
 
@@ -156,7 +168,7 @@ export function deckView(
   // cited lines as the band holds. Seven rows are spoken for: headline, title, meta, statement,
   // path, verdict, keys.
   if (shownSource !== null && Code !== undefined) {
-    const codeRows = Math.max(3, Math.min(24, maxRows - 8))
+    const codeRows = Math.max(3, Math.min(24, maxRows - 8 - noteRows))
     const gist = rule.statement !== '' ? rule.statement : (rule.then ?? rule.given ?? '')
 
     return (
@@ -173,6 +185,7 @@ export function deckView(
           wrap="truncate-end"
         />
         {verdictLine}
+        {noteLine}
         {keys}
       </Box>
     )
@@ -182,7 +195,7 @@ export function deckView(
   const fixed = 8
   // One row of slack: a band exactly full still scrolls on some layouts.
   const isTight = maxRows < 16
-  const room = Math.max(1, maxRows - (isTight ? fixed - 3 : fixed) - 1)
+  const room = Math.max(1, maxRows - (isTight ? fixed - 3 : fixed) - 1 - noteRows)
   const prose = Math.max(1, room)
 
   // Share the prose rows: flags one row each, the statement up to two, the rest split over Given/When/Then.
@@ -213,11 +226,11 @@ export function deckView(
   block('Then', rule.then)
 
   if (rule.defect !== undefined) {
-    rows.push({ text: wrapLines(`⚠ Suspected defect: ${rule.defect}`, width, 1)[0] ?? '', color: 'yellow' })
+    rows.push({ text: wrapLines(`! Suspected defect: ${rule.defect}`, width, 1)[0] ?? '', color: WARN })
   }
 
   if (rule.sme !== undefined) {
-    rows.push({ text: wrapLines(`? For an SME: ${rule.sme}`, width, 1)[0] ?? '', color: 'magenta' })
+    rows.push({ text: wrapLines(`? For an SME: ${rule.sme}`, width, 1)[0] ?? '', color: HEAD })
   }
 
   return (
@@ -230,12 +243,13 @@ export function deckView(
       <Box marginTop={isTight ? 0 : 1} flexDirection="column">
         {rows.slice(0, prose).map(row => (
           <Text wrap="truncate-end" color={row.color}>
-            {row.label !== undefined ? <Text bold color="cyan">{`${row.label} `}</Text> : null}
+            {row.label !== undefined ? <Text bold color={HEAD}>{`${row.label} `}</Text> : null}
             {row.text}
           </Text>
         ))}
       </Box>
       <Box marginTop={isTight ? 0 : 1}>{verdictLine}</Box>
+      {noteLine}
       {keys}
     </Box>
   )
@@ -262,12 +276,12 @@ export function signView(
 
   return (
     <Box flexDirection="column" width={width}>
-      <Text bold color="cyan">Sign the brief</Text>
+      <Text bold color={HEAD}>Sign the brief</Text>
       <Text dimColor wrap="wrap">
-        {`analysis/${system}/MODERNIZATION_BRIEF.md · execution commands treat an unsigned brief as not approved.`}
+        {`Records who approved the plan in analysis/${system}/MODERNIZATION_BRIEF.md, and how much of it. Nothing is built until it is signed.`}
       </Text>
       {openQuestions > 0 ? (
-        <Text color="yellow" wrap="wrap">{`${openQuestions} open question${openQuestions === 1 ? '' : 's'} in the brief ${openQuestions === 1 ? 'is' : 'are'} still unticked.`}</Text>
+        <Text color={WARN} wrap="wrap">{`${openQuestions} open question${openQuestions === 1 ? '' : 's'} in the brief ${openQuestions === 1 ? 'is' : 'are'} still unticked.`}</Text>
       ) : null}
       <Box marginTop={1} flexDirection="column">
         {Input !== undefined ? (
@@ -297,7 +311,7 @@ export function signView(
           {`${sign.covers === 'full' ? '◉' : '○'} Full plan`}
         </Button>
       </Box>
-      {sign.error !== null ? <Text color="red" wrap="wrap">{sign.error}</Text> : null}
+      {sign.error !== null ? <Text color={BAD} wrap="wrap">{sign.error}</Text> : null}
       <Box marginTop={1} columnGap={2}>
         <Button key="do-sign" onPress={actions.sign}>sign</Button>
         <Button key="cancel" dimColor onPress={actions.cancel}>cancel</Button>

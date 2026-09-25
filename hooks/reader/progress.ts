@@ -3,12 +3,15 @@ import { isSystemName, isToken, plain } from '../text'
 import { parseBrief, type Brief, type Phase } from './brief'
 import { discoverEstate, sourceSizes } from './discover'
 import { estateOfTopology, keysOfUnit, type EstateModel, type EstateUnit } from './estate-model'
-import { listOrEmpty, mtimeOrNull, readOrNull, type ReaderFs } from './fs'
+import { dirNamesOf, mtimeOrNull, readOrNull, type ReaderFs } from './fs'
 import { isDone, readModernizedIn, type ModernizedModule, type TestTotals } from './modernized'
 import { needsReview, parseRules, type RuleSet } from './rules'
 import { pickTrack, TRACK_LABELS, type TrackKey } from './tracks'
 import { parseTopology, type Topology } from './topology'
+import { parseVerification, proofOfModule, type ProofState, type Verification } from './verification'
+import { parseLedger } from '../review/ledger'
 import {
+  baselineRowOf,
   changedUnitsOf,
   parseBaseline,
   parseCatalog,
@@ -36,6 +39,7 @@ export type StageKey =
   | 'baseline'
   | 'pilot'
   | 'migrate'
+  | 'compare'
   | 'verify'
   | 'spec'
   | 'design'
@@ -55,7 +59,7 @@ export type ReviewVerdict = 'confirmed' | 'wrong' | 'discuss'
 
 export type ReviewLedger = Record<
   string,
-  { verdict: ReviewVerdict; at: string; title?: string; note?: string }
+  { verdict: ReviewVerdict; at: string; title?: string; /** The reviewer's own words, when they gave any. */ note?: string }
 >
 
 export type NextStep = {
@@ -63,6 +67,8 @@ export type NextStep = {
   text: string
   isByHand: boolean
   reason: string
+  /** A step the pane can do itself: `sign` opens the sign-off dialog. */
+  action?: 'sign'
 }
 
 /** What an uplift has left on disk, beyond the modules it changed. */
@@ -97,6 +103,13 @@ export type Snapshot = {
   extras: ModernizedModule[]
   uplift: UpliftFacts | null
   findings: { exists: boolean; isScan: boolean }
+  /** The proof pack's verdicts, when the verify command has run. */
+  verification: Verification | null
+  /**
+   * Where each built module stands with the proof, by its folder name lower-cased. An uplift is one piece, so it has one
+   * entry, under the name of its working copy (`<system>-uplifted`).
+   */
+  proofs: Map<string, ProofState>
   reviews: ReviewLedger
   /** Size of the units finished over the estate's total; null without an estate, or where units of work are not the estate's own. */
   percent: number | null
@@ -118,6 +131,7 @@ export const STAGE_LABELS: Record<StageKey, string> = {
   baseline: 'baseline',
   pilot: 'pilot',
   migrate: 'migrate',
+  compare: 'compare',
   verify: 'verify',
   spec: 'spec',
   design: 'design',
@@ -133,6 +147,7 @@ const STAGE_FILES = {
   brief: 'MODERNIZATION_BRIEF.md',
   transform: 'TRANSFORMATION_NOTES.md',
   harden: 'SECURITY_FINDINGS.md',
+  verify: 'VERIFICATION.json',
   deltas: 'DELTA_CATALOG.md',
   baseline: 'BASELINE.md',
   pilot: 'PLAYBOOK.md',
@@ -183,10 +198,10 @@ export async function systemsOf(fs: ReaderFs, legacyDir = 'legacy'): Promise<str
   const names = new Set<string>()
 
   for (const root of ['analysis', legacyDir]) {
-    for (const entry of await listOrEmpty(fs, root)) {
+    for (const name of await dirNamesOf(fs, root)) {
       // The names the plugin's workflows accept: anything else could not be run on, and is not put in a command or a note.
-      if (entry.kind === 'dir' && isSystemName(entry.name)) {
-        names.add(entry.name)
+      if (isSystemName(name)) {
+        names.add(name)
       }
     }
   }
@@ -223,9 +238,36 @@ export function isUnitDone(
   }
 
   // An uplift is proven by reproducing the baseline; with no per-module baseline, passing is all there is to compare.
-  const hasRows = (snapshot.uplift?.baseline?.rows.size ?? 0) > 0
+  const baseline = snapshot.uplift?.baseline
+  const hasRows = (baseline?.rows.size ?? 0) > 0 || (baseline?.headline ?? null) !== null
 
   return module.state === 'reviewed' || (module.state === 'tests-green' && !hasRows)
+}
+
+/** The command that opens the whole process: the prefix without its verb dash (`/code-modernization:modernize`). */
+export const frontDoorOf = (prefix: string): string => prefix.replace(/-$/, '')
+
+/**
+ * The verify step a built module calls for: none yet, changed since it was verified, or failed. A module that is
+ * proven, or partly proven (which a person decides on), calls for nothing; nor does one with no notes and no verdict.
+ */
+function verifyStepOf(prefix: string, system: string, module: Pick<ModernizedModule, 'dir'>, proof: ProofState | undefined): NextStep | null {
+  if (proof === undefined || proof.state === 'proven' || proof.state === 'partly') {
+    return null
+  }
+
+  const name = plain(module.dir, 60)
+  const text = `${prefix}verify ${system}${isToken(module.dir) ? ` ${module.dir}` : ''}`
+
+  if (proof.state === 'none') {
+    return { text, isByHand: false, reason: `${name} is built, and nothing has checked yet that it behaves like the old code` }
+  }
+
+  if (proof.state === 'changed') {
+    return { text, isByHand: false, reason: `${name} changed after it was verified: check it again` }
+  }
+
+  return { text, isByHand: false, reason: `${name} is NOT PROVEN${proof.reason === '' ? '' : `: ${proof.reason}`}. Fix that, then check again` }
 }
 
 function nextOfTransform(
@@ -234,55 +276,68 @@ function nextOfTransform(
   stages: Stage[],
   brief: Brief | null,
   byNode: Map<string, ModernizedModule>,
+  hasAnalysis: boolean,
+  proofs: ReadonlyMap<string, ProofState>,
 ): NextStep | null {
   const done = (key: StageKey) => stages.find(stage => stage.key === key)?.isDone === true
   const cmd = (name: string, rest = '') => `${prefix}${name} ${system}${rest === '' ? '' : ` ${rest}`}`
 
+  // Nothing has been written for this system yet: the front door asks what the person wants, once, and gives the first step.
+  if (!hasAnalysis) {
+    return { text: `${frontDoorOf(prefix)} ${system}`, isByHand: false, reason: 'start here: it asks what you want done, then gives you the first step' }
+  }
+
   if (!done('preflight') && !done('assess')) {
-    return { text: cmd('preflight'), isByHand: false, reason: 'check the environment before analysis' }
+    return { text: cmd('preflight'), isByHand: false, reason: 'first, check the environment and that all the code is there' }
   }
 
   if (!done('assess')) {
-    return { text: cmd('assess'), isByHand: false, reason: 'inventory and complexity come first' }
+    return { text: cmd('assess'), isByHand: false, reason: 'what you have: size, complexity, risks and the recommended approach' }
   }
 
   if (!done('map')) {
-    return { text: cmd('map'), isByHand: false, reason: 'the brief and the rules both read the topology' }
+    return { text: cmd('map'), isByHand: false, reason: 'how the parts of the code connect: calls, data and business flows' }
   }
 
   if (!done('rules')) {
-    return { text: cmd('extract-rules'), isByHand: false, reason: 'the behavior contract comes from the rules' }
+    return { text: cmd('extract-rules'), isByHand: false, reason: 'what the code does, written as rules a business person can check' }
   }
 
   if (!done('brief') || brief === null) {
-    return { text: cmd('brief'), isByHand: false, reason: 'discovery is complete; plan the phases' }
+    return { text: cmd('brief'), isByHand: false, reason: 'the phased plan you approve before anything is built' }
   }
 
   if (!brief.approval.isSigned) {
     return {
-      text: 'approve the brief: tell Claude which phases you approve',
+      text: 'approve the brief',
       isByHand: true,
-      reason: 'execution commands treat an unapproved brief as not approved',
+      action: 'sign',
+      reason: 'nothing is built until a person approves the plan: sign it here, or tell Claude which phases you approve',
     }
   }
 
   const target = brief.target !== undefined ? slugOf(brief.target) : ''
 
   for (const phase of approvedPhases(brief)) {
-    const open = phase.modules.find(id => {
+    // In the order the phase names them: a module that is built and not yet verified is checked before the next one starts.
+    for (const id of phase.modules) {
       const module = byNode.get(id)
 
-      return module === undefined || !isDone(module)
-    })
+      if (module === undefined || !isDone(module)) {
+        // A module id is text from the map: it goes in a command only when it is one plain token.
+        const isNamed = isToken(id)
 
-    if (open !== undefined) {
-      // A module id is text from the map: it goes in a command only when it is one plain token.
-      const isNamed = isToken(open)
+        return {
+          text: cmd('transform', `${isNamed ? id : '<module>'}${target === '' ? '' : ` ${target}`}`),
+          isByHand: !isNamed,
+          reason: `Phase ${phase.number} names ${plain(id, 60)} and it is not reviewed yet`,
+        }
+      }
 
-      return {
-        text: cmd('transform', `${isNamed ? open : '<module>'}${target === '' ? '' : ` ${target}`}`),
-        isByHand: !isNamed,
-        reason: `Phase ${phase.number} names ${plain(open, 60)} and it is not reviewed yet`,
+      const step = verifyStepOf(prefix, system, module, proofs.get(module.dir.toLowerCase()))
+
+      if (step !== null) {
+        return step
       }
     }
 
@@ -300,52 +355,67 @@ function nextOfTransform(
     isByHand: false,
     reason:
       brief.approval.covers === 'full'
-        ? 'every approved phase is reviewed'
-        : 'Phase 1 is reviewed; its retrospective revises the brief before Phase 2 is approved',
+        ? 'every approved phase is built and checked'
+        : 'Phase 1 is built and checked; its retrospective revises the brief before Phase 2 is approved',
   }
 }
 
-/** The uplift command needs both versions, which only a person knows: the hint is by hand. */
-function nextOfUplift(prefix: string, system: string, stages: Stage[]): NextStep {
+/** The uplift command takes its two versions from what the person said at the start (`INTENT.md`, the brief), and asks when neither has them. */
+function nextOfUplift(prefix: string, system: string, stages: Stage[], proofs: ReadonlyMap<string, ProofState>): NextStep {
   const done = (key: StageKey) => stages.find(stage => stage.key === key)?.isDone === true
-  const command = `${prefix}uplift ${system} <from> <to>`
+  const command = `${prefix}uplift ${system}`
 
   if (!done('deltas')) {
-    return { text: command, isByHand: true, reason: 'the delta catalog comes first: what the target version breaks here' }
+    return { text: command, isByHand: false, reason: 'first it lists what the newer version breaks in this code' }
   }
 
   if (!done('baseline')) {
-    return { text: command, isByHand: true, reason: 'record the baseline before any module is migrated: it is the equivalence target' }
+    return { text: command, isByHand: false, reason: 'next it records the baseline: what the tests do today, so the result can be compared' }
   }
 
   if (!done('pilot')) {
-    return { text: command, isByHand: true, reason: 'migrate one representative module and write the playbook before the rest' }
+    return { text: command, isByHand: false, reason: 'next it migrates one module and writes down what it learned, before the rest' }
   }
 
-  if (!done('verify')) {
-    return { text: command, isByHand: true, reason: 'migrate the rest in batches by the playbook, then run the dual-run diff' }
+  if (!done('compare')) {
+    return { text: command, isByHand: false, reason: 'next it migrates the rest in batches and compares every result with the baseline' }
   }
 
-  return { text: `${prefix}status ${system}`, isByHand: false, reason: 'every uplift artifact is written; status checks what is stale' }
+  // The whole upgraded copy is one thing to prove, under the name of its working copy.
+  const step = verifyStepOf(prefix, system, { dir: `${system}-uplifted` }, proofs.get(`${system}-uplifted`))
+
+  if (step !== null) {
+    return { ...step, text: `${prefix}verify ${system}` }
+  }
+
+  return { text: `${prefix}status ${system}`, isByHand: false, reason: 'the upgrade is built and checked; status says what is stale' }
 }
 
-function nextOfReimagine(prefix: string, system: string, stages: Stage[]): NextStep {
+function nextOfReimagine(prefix: string, system: string, stages: Stage[], modules: readonly ModernizedModule[], proofs: ReadonlyMap<string, ProofState>): NextStep {
   const done = (key: StageKey) => stages.find(stage => stage.key === key)?.isDone === true
-  const command = `${prefix}reimagine ${system} <vision>`
+  const command = `${prefix}reimagine ${system}`
 
   if (!done('spec')) {
-    return { text: command, isByHand: true, reason: 'the spec is mined from the legacy code first' }
+    return { text: command, isByHand: false, reason: 'first it writes down what the old system does, from its code' }
   }
 
   if (!done('design')) {
-    return { text: command, isByHand: true, reason: 'the target architecture is designed and reviewed against the spec' }
+    return { text: command, isByHand: false, reason: 'next it designs the new architecture and checks it against that spec' }
   }
 
   if (!done('scaffold')) {
-    return { text: command, isByHand: true, reason: 'scaffold each service from the approved architecture' }
+    return { text: command, isByHand: false, reason: 'next it builds each service of the approved design, with tests' }
   }
 
-  return { text: `${prefix}status ${system}`, isByHand: false, reason: 'the services are scaffolded; status checks what is stale' }
+  for (const module of modules) {
+    const step = verifyStepOf(prefix, system, module, proofs.get(module.dir.toLowerCase()))
+
+    if (step !== null) {
+      return step
+    }
+  }
+
+  return { text: `${prefix}status ${system}`, isByHand: false, reason: 'the services are built and checked; status says what is stale' }
 }
 
 export type ReadOptions = {
@@ -447,11 +517,12 @@ export async function readSnapshot(
   const reimagineRoot = join('modernized', `${system}-reimagined`)
   const observed = options.observed ?? new Map<string, TestTotals>()
 
-  const [topo, rules, catalog, baseline, reviewsRaw, findingsHead, marks] = await Promise.all([
+  const [topo, rules, catalog, baseline, verificationRead, reviewsRaw, findingsHead, marks] = await Promise.all([
     cached(fs, cache, join(dir, STAGE_FILES.map), parseTopology),
     cached(fs, cache, join(dir, STAGE_FILES.rules), parseRules),
     cached(fs, cache, join(dir, STAGE_FILES.deltas), parseCatalog),
     cached(fs, cache, join(dir, STAGE_FILES.baseline), parseBaseline),
+    cached(fs, cache, join(dir, STAGE_FILES.verify), parseVerification),
     readOrNull(fs, join(dir, REVIEWS_FILE)),
     readOrNull(fs, join(dir, STAGE_FILES.harden)),
     Promise.all(
@@ -494,17 +565,7 @@ export async function readSnapshot(
     }
   }
 
-  let reviews: ReviewLedger = {}
-
-  if (reviewsRaw !== null) {
-    try {
-      const parsed = JSON.parse(reviewsRaw) as { reviews?: ReviewLedger }
-
-      reviews = parsed.reviews ?? {}
-    } catch {
-      reviews = {}
-    }
-  }
+  const reviews = parseLedger(reviewsRaw)
 
   const isScan = findingsHead !== null && /generated-by:\s*modernize-harden/.test(findingsHead.split('\n')[0] ?? '')
 
@@ -583,6 +644,48 @@ export async function readSnapshot(
   const snapshotFacts = { track, uplift }
   const done = modules.filter(module => isUnitDone(snapshotFacts, module))
 
+  // Where each built module stands with the proof. An uplift is one piece: the whole working copy has the one verdict.
+  const verification = verificationRead.value
+  const proofs = new Map<string, ProofState>()
+
+  if (track === 'uplift') {
+    const name = `${system}-uplifted`
+    const proof = proofOfModule(verification, 'uplift', name, upliftNotesAt ?? 0, upliftNotesAt !== null)
+
+    if (proof !== null) {
+      proofs.set(name.toLowerCase(), proof)
+    }
+  } else {
+    for (const module of modules) {
+      const proof = proofOfModule(verification, track, module.dir, module.mtimeMs, module.hasNotes)
+
+      if (proof !== null) {
+        proofs.set(module.dir.toLowerCase(), proof)
+      }
+    }
+  }
+
+  const proofList = [...proofs.values()]
+  const isProofDone = (proof: ProofState) => proof.state === 'proven' || proof.state === 'partly'
+
+  const verifyStage: Stage[] =
+    proofList.length === 0 && track !== 'uplift' && modules.length === 0
+      ? []
+      : [
+          {
+            key: 'verify',
+            label: STAGE_LABELS.verify,
+            isDone: proofList.length > 0 && proofList.every(isProofDone),
+            mtimeMs: null,
+            ...(proofList.length > 0 && {
+              detail:
+                track === 'uplift'
+                  ? (proofList[0]?.verdict ?? 'not verified yet').toLowerCase()
+                  : `${proofList.filter(proof => proof.state === 'proven').length} of ${proofList.length} proven`,
+            }),
+          },
+        ]
+
   const green = modules.filter(
     module => module.state === 'tests-green' || module.state === 'reviewed' || isUnitDone(snapshotFacts, module),
   )
@@ -644,6 +747,7 @@ export async function readSnapshot(
               detail: green.length === 0 ? 'in progress' : passing > 0 ? `${passing} green` : `${green.length} module${green.length === 1 ? '' : 's'}`,
             }),
           },
+          ...verifyStage,
         ]
       : track === 'uplift'
         ? [
@@ -677,12 +781,13 @@ export async function readSnapshot(
               ...(modules.length > 0 && { detail: `${modules.length} module${modules.length === 1 ? '' : 's'}` }),
             },
             {
-              key: 'verify' as const,
-              label: STAGE_LABELS.verify,
+              key: 'compare' as const,
+              label: STAGE_LABELS.compare,
               isDone: upliftNotesAt !== null,
               mtimeMs: upliftNotesAt,
               ...(modules.length > 0 && { detail: `${done.length}/${modules.length} match` }),
             },
+            ...verifyStage,
           ]
         : [
             { key: 'preflight' as const, label: STAGE_LABELS.preflight, isDone: preflightAt !== null, mtimeMs: preflightAt },
@@ -702,6 +807,7 @@ export async function readSnapshot(
               mtimeMs: null,
               ...(modules.length > 0 && { detail: `${green.length}/${modules.length} green` }),
             },
+            ...verifyStage,
           ]),
     ...withFindings,
   ]
@@ -717,14 +823,16 @@ export async function readSnapshot(
   const attention: string[] = []
 
   for (const module of modules) {
-    const row = track === 'uplift' ? (baseline.value?.rows.get(module.dir.toLowerCase()) ?? null) : null
+    const row = track === 'uplift' ? baselineRowOf(baseline.value, module.dir) : null
 
-    if (module.state === 'tests-red' && module.tests !== null) {
+    if ((module.state === 'tests-red' || module.state === 'tests-failing') && module.tests !== null) {
       const bad = module.tests.failures + module.tests.errors
 
       attention.push(
         track === 'uplift'
-          ? `${module.dir}: ${bad} failing, the baseline had ${row === null ? 0 : row.fail + row.error}`
+          ? row === null
+            ? `${module.dir}: ${bad} tests failing, and the baseline has no row for it to compare with`
+            : `${module.dir}: ${bad} failing, the baseline had ${row.fail + row.error}`
           : `${module.dir}: ${bad} of ${module.tests.tests} tests red`,
       )
     }
@@ -735,6 +843,12 @@ export async function readSnapshot(
 
     if (track === 'transform' && module.state === 'tests-green' && module.hasNotes && !module.hasReviewSection) {
       attention.push(`${module.dir}: tests green; the notes do not show the architecture review`)
+    }
+  }
+
+  for (const [name, proof] of proofs) {
+    if (proof.state === 'not') {
+      attention.push(`${track === 'uplift' ? 'the upgrade' : (modules.find(module => module.dir.toLowerCase() === name)?.dir ?? name)}: NOT PROVEN${proof.reason === '' ? '' : `: ${proof.reason}`}`)
     }
   }
 
@@ -784,16 +898,16 @@ export async function readSnapshot(
     }
 
     if (pending > 0) {
-      attention.push(`${pending} P0 rule${pending === 1 ? '' : 's'} flagged for a person and not reviewed yet`)
+      attention.push(`${pending} high-priority rule${pending === 1 ? '' : 's'} still need${pending === 1 ? 's' : ''} a person's review`)
     }
   }
 
   const next: NextStep | null =
     track === 'uplift'
-      ? nextOfUplift(options.commandPrefix, system, stages)
+      ? nextOfUplift(options.commandPrefix, system, stages, proofs)
       : track === 'reimagine'
-        ? nextOfReimagine(options.commandPrefix, system, stages)
-        : nextOfTransform(options.commandPrefix, system, stages, brief.value, byNode)
+        ? nextOfReimagine(options.commandPrefix, system, stages, modules, proofs)
+        : nextOfTransform(options.commandPrefix, system, stages, brief.value, byNode, analysisAt !== null, proofs)
 
   return {
     system,
@@ -810,6 +924,8 @@ export async function readSnapshot(
     extras,
     uplift,
     findings: { exists: findingsHead !== null, isScan },
+    verification,
+    proofs,
     reviews,
     percent: track === 'reimagine' || loc === 0 ? null : locDone / loc,
     totals: {
@@ -826,28 +942,35 @@ export async function readSnapshot(
 
 /** One line for the status bar and the prompt's hidden context. */
 export function oneLineOf(snapshot: Snapshot): string {
-  const countable = snapshot.stages.filter(stage => stage.key !== 'harden' && stage.key !== 'transform')
+  // A rewrite's five analysis steps are what "analysis 5/5" counts: its build, its proof and its scan are not among them.
+  const countable = snapshot.stages.filter(stage => stage.key !== 'harden' && stage.key !== 'transform' && !(snapshot.track === 'transform' && stage.key === 'verify'))
   const done = countable.filter(stage => stage.isDone).length
 
   const parts =
     snapshot.track === 'transform'
-      ? [`${snapshot.system}: discovery ${done}/5`]
-      : [`${snapshot.system}: ${TRACK_LABELS[snapshot.track]} ${done}/${countable.length} steps`]
+      ? [`${snapshot.system}: analysis ${done}/5 steps done`]
+      : [`${snapshot.system}: ${TRACK_LABELS[snapshot.track]} ${done}/${countable.length} steps done`]
 
   if (snapshot.brief !== null) {
-    parts.push(snapshot.brief.approval.isSigned ? 'brief approved' : 'brief awaiting approval')
+    parts.push(snapshot.brief.approval.isSigned ? 'brief approved' : 'brief waiting for approval')
   }
 
   if (snapshot.totals.modules > 0 && snapshot.modules.length > 0) {
     parts.push(
       snapshot.track === 'reimagine'
-        ? `${snapshot.modules.length} services scaffolded`
-        : `${snapshot.totals.done}/${snapshot.totals.modules} modules ${snapshot.track === 'uplift' ? 'match the baseline' : 'reviewed'}`,
+        ? `${snapshot.modules.length} service${snapshot.modules.length === 1 ? '' : 's'} built`
+        : `${snapshot.totals.done} of ${snapshot.totals.modules} modules ${snapshot.track === 'uplift' ? 'match the baseline' : 'reviewed'}`,
     )
   }
 
+  const proven = [...snapshot.proofs.values()].filter(proof => proof.state === 'proven').length
+
+  if (proven > 0) {
+    parts.push(snapshot.track === 'uplift' ? 'proven to behave the same' : `${proven} proven`)
+  }
+
   if (snapshot.attention.length > 0) {
-    parts.push(`${snapshot.attention.length} need attention`)
+    parts.push(`${snapshot.attention.length} need${snapshot.attention.length === 1 ? 's' : ''} attention`)
   }
 
   return parts.join(' · ')

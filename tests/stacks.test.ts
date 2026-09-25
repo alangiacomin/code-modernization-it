@@ -5,7 +5,7 @@ import { discoverEstate } from '../hooks/reader/discover'
 import { xrayOf } from '../hooks/xray/xray'
 import { readNotes, stateOfUplift, totalsOfTrx } from '../hooks/reader/modernized'
 import { oneLineOf, readSnapshot, systemsOf, type ReadOptions, type Snapshot } from '../hooks/reader/progress'
-import { changedPathsOf, parseBaseline, parseCatalog } from '../hooks/reader/uplift'
+import { baselineRowOf, changedPathsOf, parseBaseline, parseCatalog } from '../hooks/reader/uplift'
 import { pickTrack } from '../hooks/reader/tracks'
 import { BAND, command, HINT, PANE, SESSION } from './fixtures/inputs'
 import {
@@ -47,6 +47,7 @@ describe('uplift, whatever the stack', () => {
       '✓baseline',
       '✓pilot',
       '✓migrate',
+      '·compare',
       '·verify',
     ])
     expect(snapshot.stages.find(stage => stage.key === 'deltas')?.detail).toBe('12 deltas')
@@ -65,12 +66,12 @@ describe('uplift, whatever the stack', () => {
     expect(snapshot.attention).toContain('shop-web: 3 failing, the baseline had 0')
     expect(snapshot.uplift?.isChangeKnown).toBe(true)
 
-    // The uplift command needs both versions, which only a person knows.
-    expect(snapshot.next?.isByHand).toBe(true)
-    expect(snapshot.next?.text).toBe(`${PREFIX}uplift shop <from> <to>`)
-    expect(snapshot.next?.reason).toContain('dual-run diff')
+    // The uplift command takes the two versions from what the person said at the start, and asks when it has none: no placeholder.
+    expect(snapshot.next?.isByHand).toBe(false)
+    expect(snapshot.next?.text).toBe(`${PREFIX}uplift shop`)
+    expect(snapshot.next?.reason).toContain('compares every result with the baseline')
 
-    expect(oneLineOf(snapshot)).toContain('shop: uplift 5/6 steps')
+    expect(oneLineOf(snapshot)).toContain('shop: uplift 5/7 steps done')
     expect(snapshot.percent).not.toBe(null)
   })
 
@@ -144,6 +145,59 @@ describe('uplift, whatever the stack', () => {
 
     expect(target.isTargetOnly).toBe(true)
     expect(target.rows.size).toBe(0)
+  })
+
+  test('a baseline of one module has no table of modules: its totals are that module\'s row, and only that module\'s', async () => {
+    const pilot = [
+      '# BASELINE: shop-web on Java 8 (the oracle)',
+      '',
+      '## Totals',
+      '',
+      '| | Count |',
+      '|---|---|',
+      '| Test cases (per-test XML) | 1039 |',
+      '| **Executed** | **946** |',
+      '| Passed | 945 |',
+      '| Failed | 1 |',
+      '| Errors | 0 |',
+      '| Skipped | 93 |',
+      '',
+      '## Per-class results',
+      '',
+      '| Class | pass | fail | error | skip |',
+      '|---|---|---|---|---|',
+      '| `PageTest` | 3 | 0 | 0 | 0 |',
+    ].join('\n')
+
+    const baseline = parseBaseline(pilot)
+
+    expect(baseline.headline).toEqual({ title: 'BASELINE: shop-web on Java 8 (the oracle)', row: { pass: 945, fail: 1, error: 0, skip: 93 } })
+    expect(baselineRowOf(baseline, 'shop-web')).toEqual({ pass: 945, fail: 1, error: 0, skip: 93 })
+    expect(baselineRowOf(baseline, 'shop'), 'a module the title does not name has no row').toBe(null)
+    expect(baselineRowOf(baseline, 'shop-webapp'), 'nor one whose name only starts the same way').toBe(null)
+    expect(baselineRowOf(baseline, ''), 'the root has none').toBe(null)
+    expect(baselineRowOf(null, 'shop-web')).toBe(null)
+    expect(parseBaseline('| Module | pass | fail |\n|---|---|---|\n| a | 1 | 0 |').headline).toBe(null)
+
+    // In the snapshot: shop-web's three new failures are set against the one the pilot's baseline had.
+    const files = { ...MAVEN_UPLIFT, 'analysis/shop/BASELINE.md': pilot }
+    const snapshot = await read(files)
+
+    expect(stateOfUnit(snapshot, 'shop-web')).toBe('tests-red')
+    expect(snapshot.attention).toContain('shop-web: 3 failing, the baseline had 1')
+  })
+
+  test('with no baseline row for a module its failures are said, not called worse than a baseline that is not there', async () => {
+    const totals = { tests: 12, failures: 3, errors: 0, skipped: 0, reports: 1 }
+
+    expect(stateOfUplift(totals, null, true)).toBe('tests-failing')
+    expect(stateOfUplift({ ...totals, failures: 0 }, null, true)).toBe('tests-green')
+
+    const files = Object.fromEntries(Object.entries(MAVEN_UPLIFT).filter(([path]) => path !== 'analysis/shop/BASELINE.md'))
+    const snapshot = await read(files)
+
+    expect(stateOfUnit(snapshot, 'shop-web')).toBe('tests-failing')
+    expect(snapshot.attention).toContain('shop-web: 3 tests failing, and the baseline has no row for it to compare with')
   })
 
   test('the catalog says how many deltas it holds, or its ids do', () => {
@@ -243,12 +297,29 @@ describe('the estate, whatever the language', () => {
     const snapshot = await read(REIMAGINE)
 
     expect(snapshot.track).toBe('reimagine')
-    expect(snapshot.stages.map(stage => `${stage.isDone ? '✓' : '·'}${stage.key}`)).toEqual(['·preflight', '✓spec', '✓design', '✓scaffold', '·tests'])
+    expect(snapshot.stages.map(stage => `${stage.isDone ? '✓' : '·'}${stage.key}`)).toEqual(['·preflight', '✓spec', '✓design', '✓scaffold', '·tests', '·verify'])
     expect(snapshot.modules.map(module => `${module.dir}:${module.state}`).sort()).toEqual(['accounts:tests-green', 'billing:scaffolded'])
     expect(snapshot.attention).toContain('billing: scaffolded with no acceptance tests')
     expect(snapshot.percent, 'services are not the legacy units').toBe(null)
     expect(snapshot.next?.text).toBe(`${PREFIX}status crm`)
     expect(snapshot.estate?.languages.map(language => language.name)).toEqual(['Perl'])
+  })
+
+  test('a legacy tree that is a symbolic link is a system: the engine lists a link as `other`', async () => {
+    const fs = memoryFs(LEGACY_ONLY, {}, ['legacy/ops'])
+
+    expect((await fs.list('legacy')).map(entry => [entry.name, entry.kind])).toEqual([['ops', 'other']])
+    expect(await systemsOf(fs)).toEqual(['ops'])
+
+    const snapshot = await readSnapshot(fs, new Map(), { commandPrefix: PREFIX, nowMs: 0 })
+
+    expect(snapshot?.system).toBe('ops')
+    expect(snapshot?.estate?.languages).toEqual([{ name: 'COBOL', share: 1 }])
+
+    // A link that leads nowhere, or to a file, is no system.
+    const broken = memoryFs({ ...LEGACY_ONLY, 'legacy/note.txt': 'x' }, {}, ['legacy/note.txt'])
+
+    expect(await systemsOf(broken)).toEqual(['ops'])
   })
 
   test('a legacy tree nobody has analysed is a system with an estate and nothing done', async () => {
@@ -257,7 +328,9 @@ describe('the estate, whatever the language', () => {
     expect(snapshot.hasAnalysis).toBe(false)
     expect(snapshot.stages.every(stage => !stage.isDone)).toBe(true)
     expect(snapshot.estate?.languages).toEqual([{ name: 'COBOL', share: 1 }])
-    expect(snapshot.next?.text).toBe(`${PREFIX}preflight ops`)
+    // Nothing written yet: the front door asks what the person wants, once, and gives the first step.
+    expect(snapshot.next?.text).toBe('/p:modernize ops')
+    expect(snapshot.next?.isByHand).toBe(false)
   })
 
   test('a tree too big for a tile per file is read a directory at a time, and a lone wrapper directory is looked through', async () => {
@@ -304,8 +377,8 @@ describe('the estate, whatever the language', () => {
 })
 
 describe('the pane in another stack', () => {
-  test('an uplift is drawn as an uplift: its stages, the modules against their baseline, and the by-hand next step', async ($, on) => {
-    worldOf(on, MAVEN_UPLIFT)
+  test('an uplift is drawn as an uplift: its stages, the modules against their baseline, and a next step it can put in the prompt', async ($, on) => {
+    const world = worldOf(on, MAVEN_UPLIFT)
     mock.clock(on)
     await $.session.start(SESSION)
 
@@ -318,9 +391,14 @@ describe('the pane in another stack', () => {
     expect(text).toContain('Java 100%')
     expect(text).toContain('matches baseline')
     expect(text).toContain('worse than baseline')
-    expect(text).toContain('/code-modernization:modernize-uplift shop <from> <to>')
-    expect(text).toContain('(by hand)')
+    expect(text).toContain('/code-modernization:modernize-uplift shop')
+    expect(text).not.toContain('<from>')
+    expect(text).not.toContain('(by hand)')
     expect(text).not.toContain('extract-rules')
+
+    // The button puts that command in the prompt, whatever the track.
+    await $.ui.press({ plugin: NAME, key: 'next' })
+    expect(world.fills).toEqual(['/code-modernization:modernize-uplift shop'])
   })
 
   test('a rewrite in PHP with no map still draws an estate map and its legend', async ($, on) => {
@@ -331,7 +409,7 @@ describe('the pane in another stack', () => {
     const tree = await $.ui.render(PANE)
 
     expect(elementsOf(tree, 'Raster').length).toBe(1)
-    expect(textOf(tree)).toContain('PHP 100% · 27 files (read off the tree)')
+    expect(textOf(tree)).toContain('PHP 100% · 27 files')
     expect(textOf(tree)).toContain('untouched 27')
   })
 
@@ -411,7 +489,7 @@ describe('showing and hiding the pane', () => {
     const bar = await $.ui.render(band)
 
     expect(textOf(bar)).toContain('show pane')
-    expect(textOf(bar), 'the bar says where the workspace stands').toContain('billing: discovery 5/5')
+    expect(textOf(bar), 'the bar says where the workspace stands').toContain('billing: analysis 5/5')
 
     await $.ui.press({ plugin: NAME, key: 'show-pane' })
     await clock.settle()
@@ -433,6 +511,63 @@ describe('showing and hiding the pane', () => {
     await $.ui.render(HINT)
     await clock.advance(500)
     expect(world.opened.length).toBe(1)
+  })
+
+  test('on a terminal too narrow to dock the pane the engine holds it back: the bar stays, and pressing its button seats the pane', async ($, on) => {
+    const world = worldOf(on, FULL)
+    const clock = mock.clock(on)
+
+    // Opened unasked below the width a pane docks at, the engine answers `isPlaced: false` and draws nothing.
+    world.unplaced = 1
+    on('ui.render', () => ({ type: 'Text', children: ['engine'] }))
+    await $.session.start(SESSION)
+    await $.ui.render(HINT)
+    await clock.advance(200)
+
+    expect(world.opened).toEqual([{ id: 'modernize', focus: false }])
+    expect(textOf(await $.ui.render(BAND)), 'the pane is not on screen, so the bar that shows it is').toContain('show pane')
+
+    // Nothing asks the engine again on every redraw.
+    await $.ui.render(HINT)
+    await clock.advance(500)
+    expect(world.opened.length).toBe(1)
+
+    // The person asks: the engine seats it at any width, and the bar gives the band back.
+    await $.ui.press({ plugin: NAME, key: 'show-pane' })
+    await clock.settle()
+    expect(world.opened.length).toBe(2)
+    expect(textOf(await $.ui.render(BAND))).toBe('engine')
+
+    // The pane then draws, and a later /modernize-panel hides it.
+    await $.ui.render(PANE)
+    expect(await $.command.run(command('modernize-panel'))).toEqual({ text: 'Modernization pane hidden' })
+  })
+
+  test('/modernize-panel on a pane the engine is holding back shows it, and says why when it still cannot', async ($, on) => {
+    const world = worldOf(on, FULL)
+    const clock = mock.clock(on)
+
+    world.unplaced = 1
+    on('ui.render', () => ({ type: 'Text', children: ['engine'] }))
+    await $.session.start(SESSION)
+    await $.ui.render(HINT)
+    await clock.advance(200)
+
+    // The first command is not a "hide": there was nothing on screen to hide.
+    expect(await $.command.run(command('modernize-panel'))).toEqual({ text: 'Modernization pane shown' })
+  })
+
+  test('a pane the engine will not draw says so, instead of claiming it is shown', async ($, on) => {
+    const world = worldOf(on, FULL)
+
+    mock.clock(on)
+    world.unplaced = 5
+    await $.session.start(SESSION)
+
+    const answer = await $.command.run(command('modernize-panel'))
+
+    expect(answer.text).toContain('The pane could not be shown')
+    expect(answer.text).toContain('144 columns')
   })
 
   test('/modernize-panel is the same switch from the keyboard', async ($, on) => {

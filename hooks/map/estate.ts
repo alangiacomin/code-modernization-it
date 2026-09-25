@@ -1,4 +1,4 @@
-import { estateOfTopology, type EstateUnit } from '../reader/estate-model'
+import { estateOfTopology, languageOf, type EstateUnit } from '../reader/estate-model'
 import type { ModuleState } from '../reader/modernized'
 import type { Snapshot } from '../reader/progress'
 import { STATE_WORDS_BY_TRACK, type TrackKey } from '../reader/tracks'
@@ -17,12 +17,21 @@ export type Touch = { atMs: number; kind: TouchKind }
 
 export type TileState = ModuleState | 'untouched'
 
+/** A module's verdict, as the map marks it: a tile's label starts with the mark. */
+export type TileProof = 'proven' | 'partly' | 'not'
+
+export const PROOF_MARKS: Record<TileProof, string> = { proven: '✓', partly: '±', not: '✗' }
+
 export type Tile = {
   id: string
   name: string
+  /** What the tile shows of its name: the last path segment, without its extension and without the prefix most tiles share. */
+  label: string
   domain: string
   loc: number
   state: TileState
+  /** What the proof says of the module, once the verify command has checked it. */
+  proof?: TileProof
   rect: Rect
   isNext: boolean
 }
@@ -40,11 +49,16 @@ export type Estate = {
 /** How long a touch stays visible, in milliseconds. */
 export const FLASH_MS = 4000
 
+/**
+ * Mid-tones on purpose: a tile has to show against a dark terminal and a light one, and the map cannot ask which it is.
+ * The labels are drawn in whichever of light or dark ink reads on the tile.
+ */
 export const STATE_COLORS: Record<TileState, number> = {
-  untouched: 0x39414f,
-  scaffolded: 0x4b5d80,
+  untouched: 0x5b6577,
+  scaffolded: 0x4a6cb0,
   'tests-written': 0x94741f,
   'tests-red': 0xb23b3b,
+  'tests-failing': 0xc2683a,
   'tests-green': 0x2c7a4c,
   reviewed: 0x2fa568,
   ported: 0x2b8ea6,
@@ -78,6 +92,54 @@ function nextModuleOf(snapshot: Snapshot): string | null {
   return snapshot.next?.isByHand === false ? (match?.[1] ?? null) : null
 }
 
+/**
+ * Short names for tiles, which show a few letters: a path is cut to its last segment, a source file's extension goes, and
+ * the prefix most of the units share (`jetty-` in `jetty-server`, `jetty-client`) goes too, so the letters that tell
+ * one tile from the next are the ones drawn.
+ */
+export function labelsOf(names: readonly string[]): string[] {
+  const stems = names.map(name => {
+    const last = name.includes('/') ? (name.split('/').filter(part => part !== '').at(-1) ?? name) : name
+
+    return languageOf(last) !== undefined ? last.replace(/\.[^.]+$/, '') : last
+  })
+
+  const counts = new Map<string, number>()
+
+  for (const stem of stems) {
+    const head = /^[^-_.\s]{2,}[-_.]/.exec(stem)?.[0]
+
+    if (head !== undefined) {
+      counts.set(head, (counts.get(head) ?? 0) + 1)
+    }
+  }
+
+  const [top, count] = [...counts.entries()].sort((a, b) => b[1] - a[1])[0] ?? ['', 0]
+  const isShared = top !== '' && count >= 4 && count >= names.length * 0.4
+
+  return stems.map(stem => (isShared && stem.startsWith(top) && stem.length > top.length ? stem.slice(top.length) : stem))
+}
+
+/** The tile's proof, when its module has a fresh verdict; nothing for a module nobody has checked or that changed since. */
+function proofMarkOf(snapshot: Snapshot, unitId: string): { proof: TileProof } | Record<string, never> {
+  const module = snapshot.byNode.get(unitId)
+
+  if (module === undefined || snapshot.track === 'uplift') {
+    return {}
+  }
+
+  const state = snapshot.proofs.get(module.dir.toLowerCase())?.state
+
+  return state === 'proven' || state === 'partly' || state === 'not' ? { proof: state } : {}
+}
+
+/** How many tiles carry each proof, in the order a legend draws them. */
+export function proofCountsOf(tiles: readonly Tile[]): { kind: TileProof; count: number }[] {
+  return (['proven', 'partly', 'not'] as const)
+    .map(kind => ({ kind, count: tiles.filter(tile => tile.proof === kind).length }))
+    .filter(entry => entry.count > 0)
+}
+
 /** Lays the snapshot's estate out in `columns` by `rows` cells. */
 export function tilesOf(snapshot: Snapshot, columns: number, rows: number): Tile[] {
   const estate = snapshot.estate ?? (snapshot.topology !== null ? estateOfTopology(snapshot.topology, 0) : null)
@@ -88,6 +150,8 @@ export function tilesOf(snapshot: Snapshot, columns: number, rows: number): Tile
 
   const next = nextModuleOf(snapshot)
   const groups = new Map<string, EstateUnit[]>()
+  const short = labelsOf(estate.units.map(unit => unit.name))
+  const labels = new Map(estate.units.map((unit, index) => [unit.id, short[index] ?? unit.name] as const))
 
   for (const unit of estate.units) {
     const members = groups.get(unit.group) ?? []
@@ -110,9 +174,11 @@ export function tilesOf(snapshot: Snapshot, columns: number, rows: number): Tile
       .map(entry => ({
         id: entry.item.id,
         name: entry.item.name,
+        label: labels.get(entry.item.id) ?? entry.item.name,
         domain: group.name,
         loc: entry.item.size,
         state: snapshot.byNode.get(entry.item.id)?.state ?? ('untouched' as const),
+        ...proofMarkOf(snapshot, entry.item.id),
         rect: entry.rect,
         isNext: entry.item.id === next,
       })),
@@ -146,7 +212,7 @@ export function paint(
     const ink = luma(body) > 140 ? 0x101418 : 0xf2f5f8
     const { x, y, w, h } = tile.rect
     const hasBevel = w >= 3 && h >= 2
-    const label = w >= 4 ? (tile.isNext ? '▸' : '') + tile.name : w >= 2 && tile.isNext ? '▸' : ''
+    const label = w >= 5 && tile.proof !== undefined ? `${tile.isNext ? '▸' : ''}${PROOF_MARKS[tile.proof]}${tile.label}` : w >= 4 ? (tile.isNext ? '▸' : '') + tile.label : w >= 2 && tile.isNext ? '▸' : ''
     const shown = label.slice(0, Math.max(0, w - (hasBevel ? 1 : 0)))
 
     for (let row = 0; row < h; row += 1) {
@@ -176,6 +242,7 @@ export function countsOf(tiles: readonly Tile[]): { state: TileState; count: num
     'scaffolded',
     'tests-written',
     'tests-red',
+    'tests-failing',
     'tests-green',
     'reviewed',
     'ported',

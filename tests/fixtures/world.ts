@@ -15,6 +15,8 @@ export type World = {
   statuses: (string | undefined)[]
   blits: number
   invalidations: number
+  /** How many of the next opens the engine holds back undrawn (unasked, on a terminal too narrow to dock a pane). */
+  unplaced: number
   fills: string[]
   commands: string[]
   aborted: string[]
@@ -29,7 +31,13 @@ export const CWD = '/work'
 const relOf = (path: string) => (path.startsWith(`${CWD}/`) ? path.slice(CWD.length + 1) : path.replace(/^\.\//, ''))
 
 /** Seats the in-memory world beneath the plugin. */
-export function worldOf(on: On, files: Readonly<Record<string, string>>, env: Readonly<Record<string, string>> = {}): World {
+export function worldOf(
+  on: On,
+  files: Readonly<Record<string, string>>,
+  env: Readonly<Record<string, string>> = {},
+  /** Paths (relative to the working directory) that are symbolic links to a directory: the engine lists a link as `other`. */
+  links: readonly string[] = [],
+): World {
   let tick = 1_000
 
   const world: World = {
@@ -43,6 +51,7 @@ export function worldOf(on: On, files: Readonly<Record<string, string>>, env: Re
     statuses: [],
     blits: 0,
     invalidations: 0,
+    unplaced: 0,
     fills: [],
     commands: [],
     aborted: [],
@@ -99,11 +108,16 @@ export function worldOf(on: On, files: Readonly<Record<string, string>>, env: Re
     }
 
     return {
-      value: [...names.entries()].sort().map(([name, kind]) => ({
-        name,
-        kind,
-        size: kind === 'file' ? (world.files.get(`${dir}/${name}`)?.length ?? 0) : 0,
-      })),
+      value: [...names.entries()].sort().map(([name, kind]) => {
+        const isLink = links.includes(dir === '' ? name : `${dir}/${name}`)
+
+        return {
+          name,
+          kind: isLink ? ('other' as const) : kind,
+          size: kind === 'file' ? (world.files.get(`${dir}/${name}`)?.length ?? 0) : 0,
+          isLink,
+        }
+      }),
     }
   })
 
@@ -127,7 +141,13 @@ export function worldOf(on: On, files: Readonly<Record<string, string>>, env: Re
   on('ui.open', ($, e) => {
     world.opened.push({ id: e.id, focus: e.focus === true })
 
-    return { value: undefined }
+    if (world.unplaced > 0) {
+      world.unplaced -= 1
+
+      return { value: { isPlaced: false, reason: 'unasked below 144 columns (120 now): press the pane\'s button or type /modernize-panel' } } as never
+    }
+
+    return { value: { isPlaced: true } } as never
   })
 
   on('ui.close', ($, e) => {
