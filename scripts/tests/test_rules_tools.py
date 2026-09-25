@@ -159,6 +159,21 @@ class RenderTests(unittest.TestCase):
             dto = open(os.path.join(ws, 'analysis/s/DATA_OBJECTS.md'), encoding='utf-8').read()
             self.assertIn('## Account', dto)
 
+    def test_a_rule_keeps_one_citation_and_the_rest_moves_to_also_cited(self):
+        sources = ['wwwroot/a.pl:100-120 (aggregation); family table at lib/b.pm:31-40',
+                   'lib/x.pm:966,1018,1238 (order lists)', 'no citation here', 'c.cbl:7']
+        result = {'confirmedRules': [
+            {'name': f'R{i}', 'category': 'Policy', 'priority': 'P1', 'source': src, 'plainEnglish': 'x',
+             'given': 'g', 'when': 'w', 'then': 't', 'confidence': 'High'} for i, src in enumerate(sources)]}
+        with tempfile.TemporaryDirectory() as ws:
+            write(ws, 'analysis/s/rules_result.json', json.dumps(result))
+            self.assertEqual(run('render_rules.py', 's', '--workspace', ws).returncode, 0)
+            text = open(os.path.join(ws, 'analysis/s/BUSINESS_RULES.md'), encoding='utf-8').read()
+            cites = re.findall(r'^\*\*Source:\*\* `([^`]*)`', text, re.M)
+            self.assertEqual(sorted(cites), sorted(['wwwroot/a.pl:100-120', 'lib/x.pm:966', 'no citation here', 'c.cbl:7']))
+            self.assertIn('**Also cited:** (aggregation); family table at lib/b.pm:31-40', text)
+            self.assertEqual(text.count('**Also cited:**'), 2)
+
     def test_unreadable_result_is_an_error(self):
         with tempfile.TemporaryDirectory() as ws:
             self.assertEqual(run('render_rules.py', 's', '--workspace', ws).returncode, 1)

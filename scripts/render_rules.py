@@ -12,6 +12,7 @@ a heading or a table cell. Standard library only.
 """
 import json
 import os
+import re
 import sys
 
 CATEGORIES = ['Calculation', 'Validation', 'Lifecycle', 'Policy']
@@ -22,6 +23,21 @@ def one_line(value, limit=300):
     text = ' '.join(str(value if value is not None else '').split())
     text = text.replace('|', '/').replace('`', "'")
     return text if len(text) <= limit else text[: limit - 1].rstrip() + '…'
+
+
+CITATION = re.compile(r'^\s*`?([^\s`:,;()]+):(\d+)(?:\s*[-\u2013]\s*(\d+))?')
+
+
+def split_citation(value):
+    """One citation per rule: the first path:line[-line] in the text is it, and whatever follows
+    (a second file, a note) comes back separately so later tools can rely on the citation alone."""
+    text = ' '.join(str(value if value is not None else '').split())
+    m = CITATION.match(text)
+    if not m:
+        return one_line(text, 200), ''
+    primary = f'{m.group(1)}:{m.group(2)}' + (f'-{m.group(3)}' if m.group(3) else '')
+    rest = text[m.end():].strip(' \t;,.-\u2013\u2014`')
+    return one_line(primary, 200), one_line(rest, 300)
 
 
 def block(value):
@@ -37,11 +53,14 @@ def block(value):
 
 def render_rule(number, rule):
     rid = f'RULE-{number:03d}'
+    source, also = split_citation(rule.get('source'))
     out = [f"### {rid}: {one_line(rule.get('name'), 120)}",
            f"**Category:** {one_line(rule.get('category'), 20)}",
            f"**Priority:** {one_line(rule.get('priority'), 4)}",
-           f"**Source:** `{one_line(rule.get('source'), 200).replace(chr(39), '')}`",
-           f"**Plain English:** {one_line(rule.get('plainEnglish'), 400)}",
+           f"**Source:** `{source.replace(chr(39), '')}`"]
+    if also:
+        out.append(f'**Also cited:** {also}')
+    out += [f"**Plain English:** {one_line(rule.get('plainEnglish'), 400)}",
            '**Specification:**',
            f"  Given {block(rule.get('given'))}",
            f"  When  {block(rule.get('when'))}",
@@ -99,7 +118,7 @@ def main(argv):
            '| ID | Name | Category | Priority | Source | Confidence |', '|---|---|---|---|---|---|']
     for n, r in numbered:
         doc.append(f"| RULE-{n:03d} | {one_line(r.get('name'), 80)} | {one_line(r.get('category'), 20)} | "
-                   f"{one_line(r.get('priority'), 4)} | `{one_line(r.get('source'), 80).replace(chr(39), '')}` | {one_line(r.get('confidence'), 10)} |")
+                   f"{one_line(r.get('priority'), 4)} | `{split_citation(r.get('source'))[0][:80].replace(chr(39), '')}` | {one_line(r.get('confidence'), 10)} |")
     doc.append('')
     for category in CATEGORIES + [None]:
         group = [n for n, r in numbered if (r.get('category') if r.get('category') in CATEGORIES else None) == category]
