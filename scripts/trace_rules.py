@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Trace every business rule to the code and the tests that name it.
+"""Trace every business rule to the code and the tests that name it, and to the tests that ran.
 
-    python3 trace_rules.py <system> [--workspace DIR] [--json] [--all]
+    python3 trace_rules.py <system> [--workspace DIR] [--json] [--all] [--module NAME --results PATH ...]
 
 Reads analysis/<system>/BUSINESS_RULES.md (rule cards: "### RULE-NNN: name" with **Priority:**,
 **Confidence:** and **Source:** lines), then scans the built code under modernized/<system>,
@@ -10,26 +10,37 @@ build/, dist/, node_modules/, bin/, obj/, __pycache__/, or any folder starting w
 mentions of each rule id, and sorts every file into "test" or "main" code. One row per rule.
 
 Evidence, strongest first:
-  tested        a test file names the rule
-  code only     only main code names it
-  claimed only  only the mapping table in TRANSFORMATION_NOTES.md or UPLIFT_NOTES.md names it, on a
-                row that also names a file that exists in the module
-  none          nothing names it
+  tested          executed evidence backs it, from the per-test results of that run (JUnit or TRX XML; --results
+                  reads them here, the proof pack passes them in): a test that ran and passed names the rule in
+                  its test or class name, or a test file names it on a line not marked skipped and that file's
+                  name is the class or file of a test that ran and passed. Without per-test results nothing is
+                  "tested"
+  named, not run  a test file names it, but nothing that ran backs it: the test is skipped, pending or failing,
+                  its class never ran, or no per-test results were given
+  code only       only main code names it
+  claimed only    only the mapping table in TRANSFORMATION_NOTES.md or UPLIFT_NOTES.md names it, on a
+                  row that also names a file that exists in the module
+  none            nothing names it
 
 A mention is RULE-017 (any case, or RULE_017), rule017 or Rule017 inside an identifier such as
 rule017_emptyInput or testRule017, and the shorthand RULE-002/003 and RULE-001, -018. Nothing is
-guessed from words: a rule that no file names by id is not "tested", however well its behavior may
-be covered. A mention shows that a test names the rule, not that the test is good.
+guessed from words. A line is marked skipped when it, or one of the 3 lines above it, holds @Disabled,
+@Ignore, [Ignore], #[ignore], xit(, xdescribe, skip (so also @Skip, t.Skip, it.skip, test.skip,
+describe.skip and @pytest.mark.skip), pending or todo, in any case. A mention shows that a test names
+the rule, not that the test is good.
 
 A test is a file under a folder called test, tests, __tests__, spec or specs, or named like
 FooTest.java, FooTests.cs, TestFoo.java, test_foo.py, foo_test.go, foo.spec.ts or foo.test.js.
 Documentation files (.md, .txt, .rst, .adoc) are never code. Symbolic links are never followed.
+A built folder that holds only test files and the files that build them (pom.xml, mvnw, package.json,
+...) is test tooling, not a module: tooling_only() says so.
 Everything read is untrusted text: it is never executed and only shortened, never trusted.
 
-Exit 0 when every P0 rule has a test that names it, 1 when some do not, 2 when the rules file
-cannot be read. Standard library only.
+Exit 0 when every P0 rule is "tested", 1 when some are not, 2 when the rules file cannot be read.
+Standard library only.
 """
 import argparse
+import bisect
 import collections
 import json
 import os
@@ -51,6 +62,15 @@ NOT_A_CLAIM = re.compile(r"(?i)not migrated|not implemented|not ported|removed|r
 CARD = re.compile(r"#{2,5}[ \t]+[*`\[]*RULE[-_](\d{1,6})(?![A-Za-z0-9])", re.I)
 FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 PATH = re.compile(r"[A-Za-z0-9_@][A-Za-z0-9_@./+-]{0,199}\.[A-Za-z][A-Za-z0-9]{0,7}(?![A-Za-z0-9_])")
+SKIPPED_LINE = re.compile(r"@Disabled|@Ignore|\[Ignore\]|#\[ignore\]|xit\(|xdescribe|skip|pending|todo", re.I)    # "skip" also covers @Skip, t.Skip, it.skip, test.skip, describe.skip, @pytest.mark.skip
+MARK_LINES = 3                          # a mention is skipped when its own line, or one of this many lines above it, holds a marker
+NOT_RUN = "named, not run"
+NO_RUN = {"known": False, "ids": frozenset(), "keys": frozenset()}
+TOOLING_NAMES = {"pom.xml", "mvnw", "mvnw.cmd", "gradlew", "gradlew.bat", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts", "gradle.properties",
+                 "package.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "pytest.ini", "tox.ini", "setup.cfg", "pyproject.toml", "uv.lock", "poetry.lock", "conftest.py",
+                 "cargo.toml", "cargo.lock", "go.mod", "go.sum", "composer.json", "composer.lock", "phpunit.xml", "phpunit.xml.dist", "cmakelists.txt", "makefile", "dockerfile"}
+TOOLING_EXT = {".csproj", ".sln", ".props", ".targets", ".runsettings"}
+TOOLING_PATTERN = re.compile(r"tsconfig[\w.-]*\.json|[\w-]+\.config\.(?:js|cjs|mjs|ts)|docker-compose[\w.-]*\.ya?ml")
 
 
 def clean(value, limit=200):
@@ -81,6 +101,56 @@ def find_ids(text):
                 pos = more.end()
                 more = MORE.match(text, pos)
     return found
+
+
+def class_keys(name):
+    """The lower-case names a test class goes by in a result file, for matching a test file's name (without its extension): the last two
+    parts of a dotted, slashed or $-nested name (a Python module and its class, a Java class), the outermost class of a nested one and,
+    for a file path, its file name with and without the extension."""
+    text = str(name if name is not None else "")[:400]
+    parts = [p for p in re.split(r"[.$:/\\]+", text) if p]
+    outer = [p for p in re.split(r"[.:/\\]+", text.split("$")[0]) if p]
+    keys = {p.lower() for p in parts[-2:] + outer[-1:]}
+    if "/" in text or "\\" in text:
+        base = re.split(r"[/\\]", text)[-1]
+        keys.update((base.lower(), os.path.splitext(base)[0].lower()))
+    return keys
+
+
+def run_evidence(results):
+    """What ran for one module, from its parsed results (baseline_diff.read_results, one per suite): {"known", "ids", "keys"}.
+    known: some result lists its tests one by one (a count, or a summary line of a log, names no test).
+    ids: the rule numbers named by the test name or class name of a test that ran and passed.
+    keys: class_keys of every class that has a test that ran and passed."""
+    out = {"known": False, "ids": set(), "keys": set()}
+    for res in results:
+        if not res or not res.get("tests"):
+            continue
+        out["known"] = True
+        for tid, status in res["tests"].items():
+            if status == "PASS" and "rule" in tid.lower():
+                out["ids"].update(n for n, _ in find_ids(tid))
+        for klass, c in (res.get("classes") or {}).items():
+            if c.get("pass"):
+                out["keys"] |= class_keys(klass)
+    return out
+
+
+def line_marks(body):
+    """([offset where each line starts], [whether the line holds a skip marker]) for one test file's text."""
+    starts, flags, pos = [], [], 0
+    for line in body.split("\n"):
+        starts.append(pos)
+        flags.append(SKIPPED_LINE.search(line) is not None)
+        pos += len(line) + 1
+    return starts, flags
+
+
+def is_live(marks, at):
+    """True when the mention at text offset `at` is not marked skipped: its own line and the 3 lines above hold no marker."""
+    starts, flags = marks
+    i = bisect.bisect_right(starts, at) - 1
+    return not any(flags[max(0, i - MARK_LINES):i + 1])
 
 
 def field(lines, name):
@@ -201,6 +271,26 @@ def walk_module(path, budget):
     return files, skipped, False
 
 
+def is_tooling(name):
+    """A file that builds or runs code without being code: pom.xml, mvnw, package.json, conftest.py, *.csproj, ..."""
+    low = name.lower()
+    return low in TOOLING_NAMES or os.path.splitext(low)[1] in TOOLING_EXT or TOOLING_PATTERN.fullmatch(low) is not None
+
+
+def tooling_only(path):
+    """True when a built folder holds test code and the files that build or run it, and nothing else that is not a document: at least
+    one test file, no main code. A file this does not recognise counts as main code, so a folder is only left out when it is clear."""
+    files, _, cut = walk_module(path, MAX_FILES)
+    tests = 0
+    for rel, _ in files:
+        kind = file_kind(rel)
+        if kind == "test":
+            tests += 1
+        elif kind == "main" and not is_tooling(rel.rsplit("/", 1)[-1]):
+            return False
+    return tests > 0 and not cut
+
+
 def claims_of(notes, names):
     """(rule numbers claimed, rule rows naming no existing file, basenames of every file the notes name).
     A row claims a rule only when it names the rule AND a file that exists in the module."""
@@ -223,16 +313,20 @@ def claims_of(notes, names):
     return claimed, unresolved, named
 
 
-def status_of(main, tests, claimed):
-    return "tested" if tests else "code only" if main else "claimed only" if claimed else "none"
+def status_of(main, tests, claimed, ran=False):
+    """A rule's status. `ran`: executed evidence backs it. A test file that names it without that evidence is "named, not run"."""
+    return "tested" if ran else NOT_RUN if tests else "code only" if main else "claimed only" if claimed else "none"
 
 
 def blank():
-    return {"main": 0, "tests": 0, "claimed": False, "named": False}
+    """`tests`: mentions in test files; `live`: those not marked skipped; `by`: how executed evidence backs the rule ("test name", "test file") or ''; `at`: the first
+    unskipped mention in a test file that ran (file:line), the one that backs it."""
+    return {"main": 0, "tests": 0, "live": 0, "claimed": False, "named": False, "by": "", "at": ""}
 
 
-def trace(workspace, system):
-    """-> the trace. Raises OSError when BUSINESS_RULES.md cannot be read."""
+def trace(workspace, system, ran=None):
+    """-> the trace. Raises OSError when BUSINESS_RULES.md cannot be read.
+    ran: {module folder (as "path" in the modules list): run_evidence(...)}: what ran, per module. Without it no rule is "tested"."""
     rules_path = os.path.join(workspace, "analysis", system, "BUSINESS_RULES.md")
     if os.path.islink(rules_path):
         raise OSError("analysis/%s/BUSINESS_RULES.md is a symbolic link" % system)
@@ -257,6 +351,7 @@ def trace(workspace, system):
             ntext = read_text(os.path.join(mod["path"], notes_name), NOTES_CAP)
             if ntext is not None:
                 claimed, unresolved, named = claims_of(ntext, names)
+        ev = (ran or {}).get(mod["rel"]) or NO_RUN
         test_files = 0
         for rel, full in files:
             kind = file_kind(rel)
@@ -267,13 +362,26 @@ def trace(workspace, system):
             body = read_text(full, FILE_CAP)
             scan["textFiles"] += body is not None
             hits = [(n, None) for n, _ in find_ids(os.path.basename(rel))] + [(n, at) for n, at in find_ids(body or "")]
+            # a test file backs the rules it names (on lines not marked skipped) when its name is the class or file of a test that ran and passed here
+            marks, backed = None, kind == "test" and bool(ev.get("known")) and os.path.splitext(os.path.basename(rel))[0].lower() in (ev.get("keys") or ())
             for n, at in hits:
                 if n not in by_n:
                     continue
-                per[n].setdefault(mod["rel"], blank())[key] += 1
+                slot = per[n].setdefault(mod["rel"], blank())
+                slot[key] += 1
+                if kind == "test":
+                    if at is not None and marks is None:
+                        marks = line_marks(body)
+                    if at is None or is_live(marks, at):
+                        slot["live"] += 1
+                        if backed and not slot["by"]:
+                            slot["by"], slot["at"] = "test file", "%s/%s:%d" % (mod["rel"], rel, 0 if at is None else bisect.bisect_right(marks[0], at))
                 place = "%s/%s" % (mod["rel"], rel)
                 if len(samples[n][key]) < SAMPLES and not any(s.rsplit(":", 1)[0] == place for s in samples[n][key]):
                     samples[n][key].append("%s:%d" % (place, 0 if at is None else body.count("\n", 0, at) + 1))
+        for n in (ev.get("ids") or ()):
+            if n in by_n:
+                per[n].setdefault(mod["rel"], blank())["by"] = "test name"
         for n in claimed & set(by_n):
             per[n].setdefault(mod["rel"], blank())["claimed"] = True
         for r in rules:
@@ -290,7 +398,7 @@ def trace(workspace, system):
         main, tests_n = sum(s["main"] for s in slots.values()), sum(s["tests"] for s in slots.values())
         claim = any(s["claimed"] for s in slots.values())
         out.append({"id": r["id"], "name": r["name"], "priority": r["priority"], "confidence": r["confidence"], "source": r["source"],
-                    "main": main, "tests": tests_n, "claimed": claim, "status": status_of(main, tests_n, claim),
+                    "main": main, "tests": tests_n, "claimed": claim, "status": status_of(main, tests_n, claim, any(s["by"] for s in slots.values())),
                     "perModule": slots, "samples": samples[r["n"]]})
     if scan["cut"]:
         notes.append("More than %d files were found, so the scan stopped early." % MAX_FILES)
@@ -304,30 +412,35 @@ def trace(workspace, system):
 
 
 def totals(rows):
-    """Per priority: rules, and how many are tested / code only / claimed only / none."""
+    """Per priority: rules, and how many are tested / named, not run / code only / claimed only / none."""
     out = {}
     for r in rows:
-        t = out.setdefault(r["priority"] or "unrated", {"rules": 0, "tested": 0, "code only": 0, "claimed only": 0, "none": 0})
+        t = out.setdefault(r["priority"] or "unrated", {"rules": 0, "tested": 0, NOT_RUN: 0, "code only": 0, "claimed only": 0, "none": 0})
         t["rules"] += 1
         t[r["status"]] += 1
     return dict(sorted(out.items()))
 
 
+def module_row(r, slot):
+    """A rule as one module sees it: the module's own counts and the status they give."""
+    return dict(r, main=slot["main"], tests=slot["tests"], live=slot["live"], claimed=slot["claimed"], by=slot["by"], at=slot["at"],
+                status=status_of(slot["main"], slot["tests"], slot["claimed"], bool(slot["by"])))
+
+
 def module_view(result, rel):
     """The rules one module answers for, each with the module's own status. A rewrite answers for the rules its code,
-    tests or notes name, or whose legacy file its notes name; an uplift keeps the whole code, so it answers for all.
-    When nothing ties any rule to the module, every rule counts (`tied` is then False): an empty list must never pass."""
+    tests or notes name, that a test of its run names, or whose legacy file its notes name; an uplift keeps the whole
+    code, so it answers for all. When nothing ties any rule to the module, every rule counts (`tied` is then False):
+    an empty list must never pass. `p0NoTests` lists the P0 rules that are not "tested": no executed test backs them."""
     mod = next((m for m in result["modules"] if m["path"] == rel), None)
     rows, tied = [], True
     for r in result["rules"]:
         slot = r["perModule"].get(rel) or blank()
-        if mod and (mod["track"] == "uplift" or slot["main"] or slot["tests"] or slot["claimed"] or slot["named"]):
-            rows.append(dict(r, main=slot["main"], tests=slot["tests"], claimed=slot["claimed"], status=status_of(slot["main"], slot["tests"], slot["claimed"])))
+        if mod and (mod["track"] == "uplift" or slot["main"] or slot["tests"] or slot["claimed"] or slot["named"] or slot["by"]):
+            rows.append(module_row(r, slot))
     if mod and not rows and result["rules"]:
         tied = False
-        for r in result["rules"]:
-            slot = r["perModule"].get(rel) or blank()
-            rows.append(dict(r, main=slot["main"], tests=slot["tests"], claimed=slot["claimed"], status=status_of(slot["main"], slot["tests"], slot["claimed"])))
+        rows = [module_row(r, r["perModule"].get(rel) or blank()) for r in result["rules"]]
     return {"rows": rows, "totals": totals(rows), "outOfScope": len(result["rules"]) - len(rows), "tied": tied,
             "p0NoTests": [r["id"] for r in rows if r["priority"] == "P0" and r["status"] != "tested"]}
 
@@ -345,34 +458,50 @@ def render(result, everything=False, view=None, module=None):
         lines.append("Counted for this module: %d rule(s)%s" % (len(rows), "" if view["tied"] else " (nothing ties a rule to it by name, so every rule counts)"))
     lines.append("")
     for p, c in tot.items():
-        lines.append("%-7s %3d rules: %d tested, %d code only, %d claimed only, %d none" % (p, c["rules"], c["tested"], c["code only"], c["claimed only"], c["none"]))
+        lines.append("%-7s %3d rules: %d tested, %d named not run, %d code only, %d claimed only, %d none" % (p, c["rules"], c["tested"], c[NOT_RUN], c["code only"], c["claimed only"], c["none"]))
     lines += ["", "%-9s %-4s %-7s %5s %5s  %s" % ("Rule", "Pri", "Conf", "Code", "Tests", "Status")]
     shown = [r for r in rows if everything or r["priority"] == "P0"] + ([] if everything else [r for r in rows if r["priority"] != "P0"][:40])
     for r in shown:
         lines.append("%-9s %-4s %-7s %5d %5d  %s  %s" % (r["id"], r["priority"] or "-", r["confidence"] or "-", r["main"], r["tests"], r["status"], clean(r["name"], 60)))
     if len(shown) < len(rows):
         lines.append("... %d more rule(s) not listed (use --all)" % (len(rows) - len(shown)))
-    lines += ["", "P0 rules with no test that names them: " + (", ".join(missing) if missing else "none")]
+    lines += ["", "P0 rules with no test that ran and passed behind them: " + (", ".join(missing) if missing else "none")]
     lines += ["Note: " + n for n in result["notes"]]
     return "\n".join(lines)
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="Trace business rules to the code and tests that name them.")
+    ap = argparse.ArgumentParser(description="Trace business rules to the code and tests that name them, and to the tests that ran.")
     ap.add_argument("system", help="the system's folder name under analysis/")
     ap.add_argument("--workspace", default=".", help="the project root holding analysis/ and modernized/ (default: current folder)")
     ap.add_argument("--json", action="store_true", help="print the full trace as JSON")
     ap.add_argument("--all", action="store_true", help="list every rule, not just P0 and the first 40 others")
     ap.add_argument("--module", metavar="NAME", help="only the rules this built module answers for (a folder under modernized/<system>/)")
+    ap.add_argument("--results", action="append", default=[], metavar="PATH",
+                    help="a JUnit or TRX result file, or a folder of them, from a run of the module named by --module (repeatable); only tests that ran and passed there make a rule 'tested'")
     args = ap.parse_args(argv)
     if not args.system or args.system in (".", "..") or re.search(r"[\\/\x00]", args.system):
         print("trace_rules.py: the system must be a folder name under analysis/, not a path", file=sys.stderr)
         return 2
+    if args.results and not args.module:
+        print("trace_rules.py: --results goes with --module: say which module's run the results are from", file=sys.stderr)
+        return 2
+    ran, read_notes = None, []
+    if args.results:
+        found = next((m for m in discover_modules(args.workspace, args.system) if m["name"].lower() == args.module.lower()), None)
+        if found is not None:
+            sys.dont_write_bytecode = True    # importing a sibling script must not leave __pycache__ in the plugin folder
+            import baseline_diff              # only this command line reads result files itself; the proof pack passes them in
+            res = baseline_diff.read_results(args.results)
+            ran = {found["rel"]: run_evidence([res])}
+            read_notes = ["%d result file(s) read: %d test(s), %d passed." % (res["files"], len(res["tests"]), sum(1 for s in res["tests"].values() if s == "PASS"))]
+            read_notes += ["result file not used: " + u for u in res["unreadable"][:3]] + [clean(p, 200) for p in res["problems"][:3]]
     try:
-        result = trace(args.workspace, args.system)
+        result = trace(args.workspace, args.system, ran)
     except OSError as err:
         print("trace_rules.py: %s" % err, file=sys.stderr)
         return 2
+    result["notes"] += read_notes or ["No test results were given, so no rule can be 'tested' here: the proof pack reads them from the result files (or add --module NAME --results PATH)."]
     view, mod = None, None
     if args.module:
         mod = next((m for m in result["modules"] if m["name"].lower() == args.module.lower()), None)

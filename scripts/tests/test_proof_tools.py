@@ -110,15 +110,19 @@ RULES_MD = """# Business Rules
 """
 
 
+def ran(*classes, ids=(), mod="modernized/s/mod"):
+    """What ran for one module, as trace_rules.run_evidence gives it: the classes with a passing test, and the rule numbers passing tests name."""
+    return {mod: {"known": True, "ids": set(ids), "keys": {c.lower() for c in classes}}}
+
+
 class TraceRules(unittest.TestCase):
     def setUp(self):
         self.root = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, self.root, True)
         put(self.root, "analysis/s/BUSINESS_RULES.md", RULES_MD)
 
-    def status(self, result=None):
-        result = result or tr.trace(self.root, "s")
-        return {r["id"]: r["status"] for r in result["rules"]}
+    def status(self, evidence=None):
+        return {r["id"]: r["status"] for r in tr.trace(self.root, "s", evidence)["rules"]}
 
     def test_tested_code_only_claimed_only_and_none(self):
         put(self.root, "modernized/s/mod/src/test/CalcTest.java", "// RULE-001 pinned here\nvoid rule002_rounds() {}\n")
@@ -126,7 +130,9 @@ class TraceRules(unittest.TestCase):
         put(self.root, "modernized/s/mod/src/main/Fee.java", "class Fee {}\n")
         put(self.root, "modernized/s/mod/TRANSFORMATION_NOTES.md",
             "## Mapping\n\n| Behavior (rule) | Legacy | Target |\n|---|---|---|\n| Fee (RULE-004) | 30-39 | `src/main/Fee.java:1-5` |\n")
-        self.assertEqual(self.status(), {"RULE-001": "tested", "RULE-002": "tested", "RULE-003": "code only", "RULE-004": "claimed only"})
+        self.assertEqual(self.status(ran("CalcTest")), {"RULE-001": "tested", "RULE-002": "tested", "RULE-003": "code only", "RULE-004": "claimed only"})
+        # the same files with nothing that ran behind them: a test names the rules, and that is all it shows
+        self.assertEqual(self.status(), {"RULE-001": "named, not run", "RULE-002": "named, not run", "RULE-003": "code only", "RULE-004": "claimed only"})
 
     def test_a_claim_needs_a_file_that_exists_and_notes_are_never_tests(self):
         put(self.root, "modernized/s/mod/src/main/Real.java", "class Real {}\n")
@@ -141,14 +147,14 @@ class TraceRules(unittest.TestCase):
         put(self.root, "modernized/s/mod/src/test/ATest.java", "// RULE-002\n")
         put(self.root, "modernized/s/mod/TRANSFORMATION_NOTES.md",
             "## Not migrated\n\n| What | Why |\n|---|---|\n| Old fee RULE-004 | `src/main/A.java` dead code |\n\n## Mapping\n\n| Rule | Target |\n|---|---|\n| RULE-002 | `src/main/A.java` |\n")
-        self.assertEqual(self.status()["RULE-004"], "none")
-        self.assertEqual(self.status()["RULE-002"], "tested")
+        self.assertEqual(self.status(ran("ATest"))["RULE-004"], "none")
+        self.assertEqual(self.status(ran("ATest"))["RULE-002"], "tested")
 
     def test_only_exact_ids_count_and_neighbours_do_not(self):
         put(self.root, "modernized/s/mod/src/test/T.java", "RULE-0010 RULE-1001 XRULE-001 rulebook-2 the rule of thumb, schedule_2, ruler-3\n")
         self.assertEqual(set(self.status().values()), {"none"})
         put(self.root, "modernized/s/mod/src/test/U.java", "// RULE_002 and testRule001 and rule-003\n")
-        self.assertEqual({k: v for k, v in self.status().items() if v == "tested"}, {"RULE-001": "tested", "RULE-002": "tested", "RULE-003": "tested"})
+        self.assertEqual({k: v for k, v in self.status(ran("T", "U")).items() if v == "tested"}, {"RULE-001": "tested", "RULE-002": "tested", "RULE-003": "tested"})
 
     def test_what_counts_as_a_test_file(self):
         for rel, kind in (("src/test/java/A.java", "test"), ("tests/x.py", "test"), ("web/__tests__/a.js", "test"), ("spec/a.rb", "test"), ("src/FooTest.java", "test"),
@@ -164,14 +170,27 @@ class TraceRules(unittest.TestCase):
 
     def test_p0_without_a_test_is_the_important_list_and_sets_the_exit_code(self):
         put(self.root, "modernized/s/mod/src/test/CalcTest.java", "// RULE-001\n")
-        result = tr.trace(self.root, "s")
+        put(self.root, "results/TEST-CalcTest.xml", junit(passing(1, "CalcTest")))
+        result = tr.trace(self.root, "s", ran("CalcTest"))
         self.assertEqual(result["p0NoTests"], ["RULE-002"])
-        self.assertEqual(result["totals"]["P0"], {"rules": 2, "tested": 1, "code only": 0, "claimed only": 0, "none": 1})
+        self.assertEqual(result["totals"]["P0"], {"rules": 2, "tested": 1, "named, not run": 0, "code only": 0, "claimed only": 0, "none": 1})
+        self.assertEqual(tr.trace(self.root, "s")["p0NoTests"], ["RULE-001", "RULE-002"])          # nothing ran, as far as this trace knows
         code, out, _ = run_main(tr.main, ["s", "--workspace", self.root])
         self.assertEqual(code, 1)
-        self.assertIn("P0 rules with no test that names them: RULE-002", out)
+        self.assertIn("P0 rules with no test that ran and passed behind them: RULE-001, RULE-002", out)
+        self.assertIn("No test results were given", out)
+        results = os.path.join(self.root, "results")
+        code, out, _ = run_main(tr.main, ["s", "--workspace", self.root, "--module", "mod", "--results", results])
+        self.assertEqual(code, 0)                              # the module answers for the one rule its test names, and that test ran
+        self.assertIn("1 result file(s) read: 1 test(s), 1 passed", out)
         put(self.root, "modernized/s/mod/src/test/CalcTest.java", "// RULE-001 RULE-002\n")
-        self.assertEqual(run_main(tr.main, ["s", "--workspace", self.root])[0], 0)
+        code, out, _ = run_main(tr.main, ["s", "--workspace", self.root, "--module", "mod", "--results", results])
+        self.assertEqual(code, 0)
+        self.assertIn("2 tested", out)
+        put(self.root, "results/TEST-CalcTest.xml", junit([("CalcTest", "a", "SKIP", "pending")]))          # the same test file, skipped now
+        code, out, _ = run_main(tr.main, ["s", "--workspace", self.root, "--module", "mod", "--results", results])
+        self.assertEqual(code, 1)
+        self.assertIn("named, not run", out)
 
     def test_module_view_counts_only_the_modules_rules_and_falls_back_to_all(self):
         put(self.root, "modernized/s/mod/src/test/CalcTest.java", "// RULE-001\n")
@@ -196,9 +215,12 @@ class TraceRules(unittest.TestCase):
 
     def test_module_option_and_exit_codes(self):
         put(self.root, "modernized/s/mod/src/test/CalcTest.java", "// RULE-001 RULE-002\n")
-        code, out, _ = run_main(tr.main, ["s", "--workspace", self.root, "--module", "MOD"])
+        put(self.root, "results/TEST-CalcTest.xml", junit(passing(2, "CalcTest")))
+        code, out, _ = run_main(tr.main, ["s", "--workspace", self.root, "--module", "MOD", "--results", os.path.join(self.root, "results")])
         self.assertEqual(code, 0)
         self.assertIn("module mod", out)
+        self.assertEqual(run_main(tr.main, ["s", "--workspace", self.root, "--module", "MOD"])[0], 1)          # no results: named, not run
+        self.assertEqual(run_main(tr.main, ["s", "--workspace", self.root, "--results", os.path.join(self.root, "results")])[0], 2)          # results need a module
         self.assertEqual(run_main(tr.main, ["s", "--workspace", self.root, "--module", "nope"])[0], 2)
         for bad in ("..", "a/b", ""):
             self.assertEqual(run_main(tr.main, [bad, "--workspace", self.root])[0], 2)
@@ -220,16 +242,16 @@ class TraceRules(unittest.TestCase):
         put(self.root, "modernized/s/mod/src/test/Binary.java", b"\x00\x01\x02 RULE-002 \x00")
         put(self.root, "modernized/s/mod/src/test/Path.java", "// ../../RULE-002/../../etc/passwd and RULE-001/..\n")
         started = time.time()
-        result = tr.trace(self.root, "s")
+        result = tr.trace(self.root, "s", ran("Path", "Huge", "Line"))
         self.assertLess(time.time() - started, 20)
-        st = self.status(result)
+        st = {r["id"]: r["status"] for r in result["rules"]}
         self.assertEqual(st["RULE-001"], "tested")            # by Path.java, which only names the id
         self.assertEqual(st["RULE-002"], "tested")            # "../../RULE-002/.." is a mention, and nothing was opened for it
         self.assertEqual(result["scan"]["linksSkipped"], 2)
         self.assertEqual([m["name"] for m in result["modules"]], ["mod"])           # the linked module folder is not a module
         self.assertNotIn("secret.java", json.dumps(result))
         os.remove(os.path.join(self.root, "modernized", "s", "mod", "src", "test", "Path.java"))
-        self.assertEqual(self.status()["RULE-002"], "none")   # a NUL byte marks a file binary, and the links reached nothing
+        self.assertEqual(self.status(ran("Path", "Binary"))["RULE-002"], "none")   # a NUL byte marks a file binary, and the links reached nothing
 
     def test_a_link_in_place_of_the_rules_file_is_refused(self):
         outside = tempfile.mkdtemp()
@@ -576,8 +598,12 @@ class ProofVerdicts(unittest.TestCase):
         shutil.rmtree(os.path.join(self.ws.root, "modernized", "s", "mod", "target"))
         put(self.ws.root, "analysis/s/equivalence/unit.test-output.txt", "[INFO] Running X\n[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0\n[INFO] BUILD SUCCESS\n", T0 + 30)
         self.ws.runs(suites=[{"module": "mod", "name": "unit", "command": "mvn test", "log": ["analysis/s/equivalence/unit.test-output.txt"]}])
-        m = self.check("PROVEN", tests="pass")
+        m = self.check("PARTLY PROVEN", tests="pass", rules="gap")          # a log gives counts, not test names: no rule can be backed by it
         self.assertEqual((m["evidence"]["tests"]["suites"][0]["source"], m["evidence"]["tests"]["executed"]), ("runner log", 3))
+        self.assertIn("no result file lists each test", m["checks"][1]["detail"])
+        put(self.ws.root, "analysis/s/BUSINESS_RULES.md", "### RULE-001: x\n**Priority:** P1\n", T0 + 10)             # with no P0 rule to back, the log is enough
+        self.check("PROVEN", tests="pass")
+        put(self.ws.root, "analysis/s/BUSINESS_RULES.md", RULES_MD, T0 + 10)
         put(self.ws.root, "analysis/s/equivalence/unit.test-output.txt", "3 tests were run, all fine, trust me\n", T0 + 30)
         m = self.check("PARTLY PROVEN", tests="gap")
         self.assertTrue(any("no summary line of a runner this script knows" in c for c in m["caveats"]))
@@ -909,8 +935,9 @@ class ProofVerdicts(unittest.TestCase):
 
     def test_a_reimagined_service_is_judged_like_a_rewritten_module(self):
         shutil.rmtree(os.path.join(self.ws.root, "modernized", "s"))
+        put(self.ws.root, "modernized/s-reimagined/api/src/main/Api.java", "class Api {}\n", T0 + 20)
         put(self.ws.root, "modernized/s-reimagined/api/src/test/ApiTest.java", "// RULE-001 RULE-002\n", T0 + 20)
-        put(self.ws.root, "modernized/s-reimagined/api/target/surefire-reports/TEST-Api.xml", junit(passing(4, "Api")), T0 + 30)
+        put(self.ws.root, "modernized/s-reimagined/api/target/surefire-reports/TEST-Api.xml", junit(passing(4, "ApiTest")), T0 + 30)
         self.ws.runs(suites=[{"module": "api", "name": "acceptance", "executed": 4, "junit": ["modernized/s-reimagined/api/target/surefire-reports"]}])
         pack = self.ws.pack()
         m = pack["modules"][0]
@@ -1694,6 +1721,19 @@ class ProofReport(unittest.TestCase):
         self.assertEqual(pv["signoff"], {"name": "", "role": "", "date": "", "decision": ""})
         self.assertEqual(pv["modules"][0]["people"][0]["text"], "A person accepts it")
 
+    def test_a_rule_named_only_by_tests_that_did_not_run_is_counted_and_tooling_folders_are_listed(self):
+        pack = good_pack()
+        pack["modules"][0]["evidence"]["rules"]["p0"].append({"id": "RULE-002", "name": "Skipped", "confidence": "High", "status": "named, not run", "tests": 1, "main": 0, "where": "T.java:3"})
+        pack["toolingOnly"] = [{"name": "parity-harness", "path": "modernized/s/parity-harness"}, "not a dict", {"name": "x" * 500, "path": 5}]
+        html = self.report(pack)
+        _, pv = self.proof(html)
+        self.assertEqual(pv["modules"][0]["p0Counts"], {"tested": 1, "claimedOnly": 0, "notRun": 1, "none": 0})
+        self.assertEqual(pv["modules"][0]["verdict"], "PARTLY PROVEN")         # a pass cannot stand next to a rule that no test ran
+        self.assertEqual([t["name"] for t in pv["tooling"]][0], "parity-harness")
+        self.assertEqual(len(pv["tooling"]), 2)
+        self.assertLessEqual(len(pv["tooling"][1]["name"]), 120)
+        self.assertEqual(self.proof(self.report(good_pack()))[1]["tooling"], [])
+
     def test_no_pack_means_no_section_and_the_older_reports_are_unchanged(self):
         code, _, _ = run_main(br.main, ["s", "--workspace", self.root, "--out", self.out])
         data = page_data(read(self.out))
@@ -1804,7 +1844,7 @@ class ProofReport(unittest.TestCase):
         mod = data["glance"]["proof"]["modules"][0]
         self.assertEqual(mod, {"name": "mod", "verdict": "PARTLY PROVEN"})
         pv = next(p["proof"] for s in data["sections"] if s["id"] == "proof" for p in s["parts"])
-        self.assertEqual(pv["modules"][0]["p0Counts"], {"tested": 1, "claimedOnly": 0, "none": 1})
+        self.assertEqual(pv["modules"][0]["p0Counts"], {"tested": 1, "claimedOnly": 0, "notRun": 0, "none": 1})
         self.assertTrue(pv["modules"][0]["reasons"][0].startswith("Rules traced: 1 of 2 P0"))
 
     def test_hostile_values_stay_data_and_the_page_keeps_its_rules(self):
@@ -1929,7 +1969,7 @@ class ProofScript(unittest.TestCase):
 
     def test_the_page_shows_the_matrix_what_is_not_proven_and_a_blank_sign_off(self):
         text = self.out[0]["text"]
-        for needle in ("What this does not prove", "It does not prove inputs nobody tried.", "P0 business rules: 1 tested, 0 claimed only, 0 with no test", "RULE-001",
+        for needle in ("What this does not prove", "It does not prove inputs nobody tried.", "P0 business rules: 1 tested, 0 named but not run, 0 claimed only, 0 with no test", "RULE-001",
                        "Waiting for a person", "A person accepts it", "Sign-off", "________________", "accept / accept with conditions / reject", "How the verdict is computed",
                        "Fresh inputs: 12 new input(s)", "tests executed: 5"):
             self.assertIn(needle, text)

@@ -293,6 +293,18 @@ class BuildFacts(unittest.TestCase):
         self.assertEqual(blocks[0]["k"], "md")
         self.assertEqual(br.parse_rules("just text\n\n## Heading")[0]["k"], "md")
 
+    def test_headings_and_fields_padded_with_thousands_of_spaces_are_parsed_in_a_moment(self):
+        import time
+        pad = " " * 6000
+        text = "### RULE-001 - Title%s#%sx\n**Priority:** P0%s\n**Suspected defect:**%s\n\n### RULE-002: Closed ###   \n**Priority:**   P1  \n" % (pad, pad, pad, pad)
+        started = time.time()
+        cards = [c for c in br.parse_rules(text) if c["k"] == "rule"]
+        self.assertLess(time.time() - started, 2)
+        self.assertEqual([c["id"] for c in cards], ["RULE-001", "RULE-002"])
+        self.assertEqual(cards[1]["title"], "Closed")
+        self.assertEqual(cards[1]["p"], "P1")
+        self.assertEqual(br.field("Priority:   \nPriority:  P2 ", "Priority"), "P2")
+
     def test_rule_priority_falls_back_to_the_index_table(self):
         text = "| ID | Name | Priority |\n|---|---|---|\n| [RULE-007](#x) | Merged | P0 |\n\n### RULE-007: Merged\n**Merged into:** RULE-006\n\n### RULE-008: Real\n**Priority:** P1\n"
         cards = [b for b in br.parse_rules(text) if b["k"] == "rule"]

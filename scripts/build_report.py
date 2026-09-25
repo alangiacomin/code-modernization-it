@@ -42,7 +42,7 @@ DOCS = [("overview", ["PREFLIGHT.md"]), ("assessment", ["ASSESSMENT.md"]),
         ("spec", ["AI_NATIVE_SPEC.md", "REIMAGINED_ARCHITECTURE.md"])]
 MERMAID_FENCE = re.compile(r"(?m)^ {0,3}(?:`{3,}|~{3,})[ \t]*mermaid\b")
 ID = r"[A-Z][A-Z0-9]*(?:-[A-Z][A-Z0-9]*)*-\d+[a-z]?"
-CARD = re.compile(r"^(#{3,4})[ \t]+[*`]*(" + ID + r")[*`]*(?:[ \t]*[·:\-–—][ \t]*(.*?))?[ \t]*#*[ \t]*$")
+CARD = re.compile(r"^(#{3,4})[ \t]+[*`]*(" + ID + r")[*`]*(?:[ \t]*[·:\-–—][ \t]*(.*))?$")   # the title's trailing spaces and #s are cut in Python: no nested quantifiers here
 FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
 CITE = re.compile(r"[A-Za-z0-9_][\w./+-]*\.[A-Za-z][A-Za-z0-9]{0,7}:\d+(?:-\d+)?(?:,\s*\d+(?:-\d+)?)*")
 DAY = "%Y-%m-%d"
@@ -138,8 +138,10 @@ def tables(text):
 
 
 def field(body, name):
-    m = re.search(r"(?im)^[ \t>*-]*\**" + name + r"\**[ \t]*:[ \t]*\**[ \t]*(.+?)[ \t]*$", body)
-    return m.group(1) if m else ""
+    for m in re.finditer(r"(?im)^[ \t>*-]*\**" + name + r"\**[ \t]*:[ \t]*\**[ \t]*(.*)$", body):
+        if m.group(1).strip():
+            return m.group(1).strip()
+    return ""
 
 
 def parse_rules(text):
@@ -162,11 +164,11 @@ def parse_rules(text):
         elif f:
             fence = f.group(1)
         else:
-            m, h = CARD.match(line), re.match(r"(#{1,6})\s", line)
+            m, h = CARD.match(line.rstrip()), re.match(r"(#{1,6})\s", line)
             if m or (h and card is not None and len(h.group(1)) <= len(card[0])):
                 flush()
                 if m:
-                    card = (m.group(1), m.group(2), (m.group(3) or "").strip(), re.sub(r"^#+\s*", "", line).strip())
+                    card = (m.group(1), m.group(2), (m.group(3) or "").rstrip(" \t#").strip(), re.sub(r"^#+\s*", "", line).strip())
                     continue
         buf.append(line)
     flush()
@@ -323,7 +325,7 @@ PROOF_VERDICTS = ("PROVEN", "PARTLY PROVEN", "NOT PROVEN")
 PROOF_CHECKS = (("tests", "Tests ran"), ("rules", "Rules traced"), ("same", "Same behavior"), ("fresh", "Fresh inputs"), ("canary", "Canary"), ("source", "Source untouched"))
 UPLIFT_CHECKS = (("baseline", "Baseline measured"), ("kept", "Tests kept"), ("deltas", "Deltas covered"))      # an uplift has these three as well
 KEPT_SHARE = 0.25
-RULE_STATES = ("tested", "claimed only", "code only", "none")
+RULE_STATES = ("tested", "named, not run", "claimed only", "code only", "none")
 FRESH_NEEDED = 10
 
 
@@ -444,7 +446,8 @@ def proof_module(m, problems):
     return {"name": name, "track": text_of(m.get("track"), 20), "verdict": verdict, "verifiedAt": text_of(m.get("verifiedAt"), 40), "checks": checks,
             "reasons": ["%s: %s" % (c["label"], c["detail"]) for c in checks if c["state"] in ("fail", "gap")], "passed": ["%s: %s" % (c["label"], c["detail"]) for c in checks if c["state"] == "pass"],
             "tests": tests, "hasRules": rules is not None, "p0": p0,
-            "p0Counts": {"tested": sum(1 for r in p0 if r["status"] == "tested"), "claimedOnly": sum(1 for r in p0 if r["status"] == "claimed only"), "none": sum(1 for r in p0 if r["status"] not in ("tested", "claimed only"))},
+            "p0Counts": {"tested": sum(1 for r in p0 if r["status"] == "tested"), "claimedOnly": sum(1 for r in p0 if r["status"] == "claimed only"),
+                         "notRun": sum(1 for r in p0 if r["status"] == "named, not run"), "none": sum(1 for r in p0 if r["status"] not in ("tested", "claimed only", "named, not run"))},
             "equivalence": dict(counts_of(eq, ("cases", "executed", "same", "differs", "missing", "withinTolerance")), tolerances=tolerances_of(eq), approved=[{"id": text_of(a.get("id"), 80), "why": text_of(a.get("why"), 300)} for a in (eq.get("approved") if isinstance(eq.get("approved"), list) else [])[:20] if isinstance(a, dict)],
                                 masks=[{"why": text_of(k.get("why"), 200), "cases": count_of(k.get("cases"))} for k in (eq.get("masks") if isinstance(eq.get("masks"), list) else [])[:10] if isinstance(k, dict)]) if eq else None,
             "fresh": fresh, "baseline": counts_of(base, ("regressionsCount", "newFailuresCount", "fixedCount", "missingCount", "renamed")) if base else None,
@@ -464,7 +467,8 @@ def proof_view(obj):
     lg = obj["legacy"] if isinstance(obj.get("legacy"), dict) else {}
     so = obj["signoff"] if isinstance(obj.get("signoff"), dict) else {}
     headline = "Proof: %s (%d module%s)." % (", ".join("%d %s" % (counts[v], v) for v in PROOF_VERDICTS if counts[v]) or "no module was verified", len(mods), "" if len(mods) == 1 else "s")
-    return {"generated": text_of(obj.get("generated"), 40), "verdict": verdict, "counts": counts, "headline": headline, "problems": problems, "modules": mods,
+    tooling = [{"name": text_of(t.get("name"), 120), "path": text_of(t.get("path"), 200)} for t in (obj["toolingOnly"] if isinstance(obj.get("toolingOnly"), list) else [])[:20] if isinstance(t, dict)]
+    return {"generated": text_of(obj.get("generated"), 40), "verdict": verdict, "counts": counts, "headline": headline, "problems": problems, "modules": mods, "tooling": tooling,
             "legacy": {"path": text_of(lg.get("path"), 200), "target": text_of(lg.get("target"), 300), "ran": lg.get("ran") if isinstance(lg.get("ran"), bool) else None,
                        "state": text_of(lg.get("state"), 20), "detail": text_of(lg.get("detail"), 300)},
             "rules": texts_of(obj.get("rules"), 700, 12), "signoff": {k: text_of(so.get(k), 120) for k in ("name", "role", "date", "decision")}}

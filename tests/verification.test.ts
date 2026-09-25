@@ -129,6 +129,26 @@ describe('the proof file, read without trusting it', () => {
     expect(({} as Record<string, unknown>).name, 'no name reached an object prototype').toBe(undefined)
   })
 
+  test('folders the pack lists as test tooling are read by track and name, and anything else in that list is dropped', () => {
+    const tooling = (list: unknown) => parseVerification(pack([entry('INTCALC', 'PROVEN')], { toolingOnly: list }))?.tooling
+
+    expect(tooling([{ name: 'parity-harness', track: 'reimagine', path: 'modernized/billing-reimagined/parity-harness' }])).toEqual([{ track: 'reimagine', name: 'parity-harness' }])
+    const cut = tooling([{ name: 'a'.repeat(500), track: 'rewrite' }, { name: 'B\nC`D', track: 'reimagine' }])?.map(item => item.name) ?? []
+
+    expect(cut[0]?.length, 'a name is at most 80 characters').toBeLessThanOrEqual(80)
+    expect(cut[1]).toBe('B C_D')
+    expect(tooling([{ name: 'x', track: 'nope' }, { name: 'x', track: '__proto__' }, { name: 'x', track: 'constructor' }, { name: '', track: 'rewrite' }, { name: 5, track: 'rewrite' }, { track: 'rewrite' }, 'x', null, 7, []]), 'a wrong type costs that item only').toEqual([])
+    expect(tooling('parity-harness'), 'not a list').toEqual([])
+    expect(tooling(undefined), 'a pack from before the list existed').toEqual([])
+    expect(tooling(Array.from({ length: 5_000 }, (_, index) => ({ name: `T${index}`, track: 'rewrite' })))?.length, 'read only so far').toBe(1_000)
+
+    const verification = parseVerification(pack([entry('INTCALC', 'PROVEN')], { toolingOnly: [{ name: 'INTCALC', track: 'rewrite' }, { name: 'HARNESS', track: 'rewrite' }] }))
+
+    expect(proofOfModule(verification, 'transform', 'harness', CHECKED, true), 'test tooling with notes is not "not yet checked"').toBe(null)
+    expect(proofOfModule(verification, 'reimagine', 'HARNESS', CHECKED, true), 'the same name on another track is another module').toMatchObject({ state: 'none' })
+    expect(proofOfModule(verification, 'transform', 'INTCALC', CHECKED, true), 'a verdict, if the pack gives one, is shown whatever else the file lists').toMatchObject({ state: 'proven' })
+  })
+
   test('a pack with thousands of modules is read only so far, and a file over the cap is not read', () => {
     const many = Array.from({ length: 5_000 }, (_, index) => entry(`M${index}`, 'PROVEN'))
 
@@ -218,6 +238,19 @@ describe('what the pane makes of the proof', () => {
     expect((await at([entry('ACCTUPD', 'PROVEN')]))?.text, 'INTCALC comes first in the phase order').toBe(`${PREFIX}verify billing INTCALC`)
     expect((await at([entry('INTCALC', 'PROVEN'), entry('ACCTUPD', 'PROVEN')]))?.text, 'both proven: ACCTVIEW, the last one, is still to build').toMatch(/transform billing ACCTVIEW/)
     expect((await at([entry('INTCALC', 'NOT PROVEN', ['Tests ran: none.']), entry('ACCTUPD', 'PROVEN')]))?.text, 'a failed one is not stepped over').toBe(`${PREFIX}verify billing INTCALC`)
+  })
+
+  test('a folder the pack lists as test tooling is not called unchecked and is never the next step', async () => {
+    const listed = { toolingOnly: [{ name: 'INTCALC', track: 'rewrite', path: 'modernized/billing/INTCALC' }] }
+    const mtimes = { [NOTES]: CHECKED - HOUR, [REPORT]: CHECKED - HOUR }
+
+    const without = await read({ ...FULL, 'analysis/billing/VERIFICATION.json': pack([]) }, mtimes)
+    const tooling = await read({ ...FULL, 'analysis/billing/VERIFICATION.json': pack([], listed) }, mtimes)
+
+    expect(without.proofs.get('intcalc')?.state, 'built, notes, no verdict').toBe('none')
+    expect(without.next?.text).toBe(`${PREFIX}verify billing INTCALC`)
+    expect(tooling.proofs.has('intcalc'), 'nothing is claimed of it').toBe(false)
+    expect(tooling.next?.text).not.toContain('verify billing INTCALC')
   })
 
   test('a forged verdict changes nothing: the module counts as not checked', async () => {

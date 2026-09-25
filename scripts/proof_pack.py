@@ -17,9 +17,13 @@ the output so an auditor can follow it:
                        come from files this script parsed itself: JUnit-style XML, or a saved raw runner
                        log (Maven/Gradle, cargo, pytest, unittest, go test, dotnet test, jest, vitest,
                        ctest, phpunit). Counts only typed into test-runs.json cap the check at "gap".
-  2  Rules traced      rewrite and reimagine only: every P0 rule the module answers for is named by a
-                       test (an id in a test name or comment). A rule only the notes name is "claimed",
-                       not tested. Uplifts keep the code, so they trace no rules.
+  2  Rules traced      rewrite and reimagine only: every P0 rule the module answers for is backed by a
+                       test that ran and passed here: the rule id is in the name (test or class) of a test
+                       result this script parsed, or a test file names it on a line not marked skipped or
+                       pending and its class or file is one of a test that passed. A rule named only by
+                       skipped, pending or failing tests is "named, not run"; one only the notes name is
+                       "claimed": neither is tested. Counts and logs name no test, so they back no rule.
+                       Uplifts keep the code, so they trace no rules.
   3  Same behavior     the development cases, judged again here by compare.py, executed at least one
                        case with none differing or missing (a case a person approved is allowed and
                        listed); for an uplift, baseline_diff.py may stand in: no regression, no new
@@ -34,6 +38,8 @@ the output so an auditor can follow it:
                        file walk, no version-control tool is run inside the untrusted tree.
 
 Open questions, unticked criteria and the sign-off are for a person: they never change the verdict.
+A built folder that holds only test code and the files that build it (a parity harness, for one) is not a
+module: it is listed as "Test tooling (not judged)", under "toolingOnly" in the JSON, and not counted.
 
 Evidence read (under analysis/<system>/, or as named): equivalence/test-runs.json (written by the
 modernize-verify command), equivalence/[<module>/]cases.json and fresh-cases.json (judged again here,
@@ -67,7 +73,8 @@ RULES_TEXT = (
     "PROVEN needs every check to pass: the six below, and for an uplift three more (7 to 9). NOT PROVEN when any check fails. PARTLY PROVEN when nothing failed but a check could not pass.",
     "1. Tests ran: at least one test executed in a fresh run, none failed, none was skipped without a reason, and every result file is newer than the code. "
     "The counts must be read by this script from result files or a saved raw runner log; counts only typed in cannot reach PROVEN.",
-    "2. Rules traced (rewrite and reimagine): every P0 rule the module answers for is named by at least one test. A rule that only the notes name is claimed, not tested.",
+    "2. Rules traced (rewrite and reimagine): every P0 rule the module answers for is backed by a test that ran and passed: its id is in the test or class name of a result this script parsed, "
+    "or a test file names it on a line not marked skipped or pending and that file's class ran and passed. A rule named only by skipped, pending or failing tests is named, not run; one only the notes name is claimed. Neither is tested.",
     "3. Same behavior: the development cases, judged again by compare.py, executed at least one case and none differs or is missing (a difference a person approved is allowed and listed); "
     "for an uplift, no regression, no new failure, no missing test and no drop in executed tests against BASELINE.md.",
     "4. Fresh inputs: at least 10 new inputs, none with the same output as a development case, ran on the legacy and the new code with no difference. Needed whenever the legacy could run here; "
@@ -80,6 +87,7 @@ RULES_TEXT = (
     "(walked by file, no process is run). The list is for a person to review; weakened assertions cannot be detected, only that files changed.",
     "9. Deltas covered (uplift): every Behavioral-silent delta in DELTA_CATALOG.md has its site's file named, as a whole word, by some test file of the working copy. A name is not proof that the test exercises the change.",
     "Open questions, unticked criteria and the sign-off are for a person. They never change the verdict.",
+    "A folder that holds only test code and the files that build it is test tooling: it is listed, not judged, and not counted.",
 )
 WORDS = {"pass": "pass", "gap": "not proven", "fail": "FAIL", "na": "not applicable"}
 CANARY = re.compile(r"Canary[^:\n|]{0,20}:\s*(.{1,300}?)\s*(?:→|->|=>|,)\s*(\d[\d,]*)\s+tests?\s+(?:failed|went red|failing)", re.I)
@@ -243,6 +251,18 @@ def suite_evidence(suite, workspace):
             ev["notes"].append("counts read from the summary lines of %s" % ", ".join(got["runners"]))
             mismatch({"executed": ev["executed"], "failed": ev["failed"], "skipped": ev["skipped"]})
     return ev, None
+
+
+def suite_results(ctx, suite):
+    """suite_evidence once per suite: a result file is parsed a single time, however many times it is asked for."""
+    if id(suite) not in ctx["parsed"]:
+        ctx["parsed"][id(suite)] = suite_evidence(suite, ctx["workspace"])
+    return ctx["parsed"][id(suite)]
+
+
+def module_run(ctx, subject):
+    """What ran for one module (trace_rules.run_evidence): read from its suites' result files. Counts and logs name no test, so they back no rule."""
+    return trace_rules.run_evidence([suite_results(ctx, s)[1] for s in suites_for(ctx["runs"], subject, ctx["unit"], ctx["subjects"])])
 
 
 # ---------------------------------------------------------------- the source check
@@ -474,17 +494,27 @@ def check_rules(ctx, subject, evidence, caveats):
     view = trace_rules.module_view(tr, subject["rel"])
     p0 = [r for r in view["rows"] if r["priority"] == "P0"]
     missing = [r["id"] for r in p0 if r["status"] != "tested"]
-    evidence["rules"] = {"tied": view["tied"], "counted": len(view["rows"]), "outOfScope": view["outOfScope"], "totals": view["totals"], "p0NoTests": missing,
-                         "p0": [{"id": r["id"], "name": r["name"], "confidence": r["confidence"], "status": r["status"], "main": r["main"], "tests": r["tests"], "claimed": r["claimed"],
-                                 "where": clean((r["samples"]["tests"] or r["samples"]["main"] or [""])[0], 200)} for r in p0][:100]}
+    unrun = [r["id"] for r in p0 if r["status"] == trace_rules.NOT_RUN]
+    known = bool((ctx["ran"].get(subject["rel"]) or trace_rules.NO_RUN).get("known"))
+    evidence["rules"] = {"tied": view["tied"], "counted": len(view["rows"]), "outOfScope": view["outOfScope"], "totals": view["totals"], "p0NoTests": missing, "namedNotRun": unrun[:100], "perTestResults": known,
+                         "p0": [{"id": r["id"], "name": r["name"], "confidence": r["confidence"], "status": r["status"], "main": r["main"], "tests": r["tests"], "claimed": r["claimed"], "by": r["by"],
+                                 "where": clean(r["at"] or (r["samples"]["tests"] or r["samples"]["main"] or [""])[0], 200)} for r in p0][:100]}
     if not view["tied"]:
         caveats.append("Nothing ties a rule to this module by name, so every rule in BUSINESS_RULES.md was counted.")
     if not p0:
         return row("rules", "pass", "No rule this module answers for is rated P0 (%d rule(s) counted)." % len(view["rows"]))
     if missing:
-        claimed = sum(1 for r in p0 if r["status"] == "claimed only")
-        return row("rules", "gap", "%d of %d P0 rule(s) are not named by any test: %s%s." % (len(missing), len(p0), ", ".join(missing[:12]), " (%d claimed only in the notes)" % claimed if claimed else ""))
-    return row("rules", "pass", "All %d P0 rule(s) this module answers for are named by at least one test." % len(p0))
+        other = [r for r in p0 if r["status"] not in ("tested", trace_rules.NOT_RUN)]
+        say = []
+        if unrun:
+            listed = ", ".join(unrun[:12]) + (" and %d more" % (len(unrun) - 12) if len(unrun) > 12 else "")
+            say.append("P0 rules named only by tests that did not run: %s (skipped, pending, failing or missing from the results)." % listed if known else
+                       "P0 rules named by tests, but no result file lists each test, so nothing shows one ran: %s." % listed)
+        if other:
+            claimed = sum(1 for r in other if r["status"] == "claimed only")
+            say.append("%d of %d P0 rule(s) are not named by any test: %s%s." % (len(other), len(p0), ", ".join(r["id"] for r in other[:12]), " (%d claimed only in the notes)" % claimed if claimed else ""))
+        return row("rules", "gap", " ".join(say))
+    return row("rules", "pass", "All %d P0 rule(s) this module answers for are backed by a test that ran and passed." % len(p0))
 
 
 def baseline_info(ctx):
@@ -762,7 +792,7 @@ def evaluate(subject, ctx):
     evidence, caveats, person = {}, [], []
     per, xml_paths, oldest, clean_ids = [], [], None, set()
     for s in suites:
-        ev, fresh = suite_evidence(s, ws)
+        ev, fresh = suite_results(ctx, s)
         per.append(ev)
         caveats += ["%s: %s" % (ev["name"] or "a suite", n) for n in ev["notes"]]
         if ev["oldest"] is not None:
@@ -817,19 +847,24 @@ def build(system, workspace, module=None, now=None):
         if not any(m["track"] == "uplift" and os.path.isdir(os.path.join(m["path"], module)) and not os.path.islink(os.path.join(m["path"], module)) for m in everything):
             raise InputError("nothing is built under modernized/ for %s module %s (built: %s)" % (system, module, ", ".join(clean(m["name"], 40) for m in everything[:10])))
         unit = module
-    found = everything
     runs = load_test_runs(adir)
-    try:
-        tr, tr_problem = trace_rules.trace(workspace, system), ""
-    except OSError as err:
-        tr, tr_problem = None, "%s, so no rule can be traced (run /code-modernization:modernize-extract-rules %s)." % (clean(str(err), 200), system)
     brief = read_text(os.path.join(adir, "MODERNIZATION_BRIEF.md"))
-    ctx = {"workspace": workspace, "adir": adir, "system": system, "runs": runs, "subjects": everything, "unit": unit, "trace": tr, "trace_problem": tr_problem, "now": now,
+    ctx = {"workspace": workspace, "adir": adir, "system": system, "runs": runs, "subjects": everything, "unit": unit, "trace": None, "trace_problem": "", "now": now, "parsed": {}, "ran": {},
            "source": source_check(workspace, system, adir), "brief": lambda mod, track: brief_items(brief, mod, track)}
-    mods = [evaluate(s, ctx) for s in sorted(found, key=lambda s: s["name"].lower())]
+    ctx["ran"] = {s["rel"]: module_run(ctx, s) for s in everything if s["track"] != "uplift"}       # what ran, per module: a rule is traced against it
+    try:
+        ctx["trace"] = trace_rules.trace(workspace, system, ctx["ran"])
+    except OSError as err:
+        ctx["trace_problem"] = "%s, so no rule can be traced (run /code-modernization:modernize-extract-rules %s)." % (clean(str(err), 200), system)
+    # a folder of only test code and the files that build it (a parity harness) is not a module: listed, not judged, not counted
+    tooling = [s for s in everything if s["track"] != "uplift" and trace_rules.tooling_only(s["path"])]
+    mods = [evaluate(s, ctx) for s in sorted(everything, key=lambda s: s["name"].lower()) if s not in tooling]
     problems = [clean(p, 300) for p in runs["problems"]] + ([] if runs["present"] else ["equivalence/test-runs.json was not found, so no test run is recorded and no module can be proven."])
+    if tooling and not mods:
+        problems.append("Every built folder holds only test code and the files that build it, so there is no module to judge.")
     return {"v": 1, "system": clean(system, 100), "generated": now, "asked": clean(module or "", 100), "rules": list(RULES_TEXT), "legacy": dict(ctx["source"], ran=runs["legacy"]["ran"]),
-            "problems": problems, "modules": mods, "signoff": {"name": "", "role": "", "date": "", "decision": ""}}
+            "problems": problems, "modules": mods, "toolingOnly": [{"name": clean(s["name"], 100), "track": s["track"], "path": clean(s["rel"], 200)} for s in sorted(tooling, key=lambda s: s["name"].lower())],
+            "signoff": {"name": "", "role": "", "date": "", "decision": ""}}
 
 
 def overall(pack):
@@ -859,6 +894,9 @@ def render_md(pack):
         p0 = ev.get("rules", {}).get("p0", [])
         tested = "%d of %d" % (sum(1 for r in p0 if r["status"] == "tested"), len(p0)) if "rules" in ev else "not applicable"
         out.append("| %s | %s | **%s** | %d | %d | %s | %s | %s |" % (cell(m["name"]), m["track"], m["verdict"], ev["tests"]["executed"], ev["tests"]["failed"], tested, WORDS[st["same"]], WORDS[st["fresh"]]))
+    if pack.get("toolingOnly"):
+        out += ["", "## Test tooling (not judged)", "", "These folders hold only test code and the files that build it, so there is no behavior in them to prove. They are not in the verdict or its counts. A module whose code is not written yet is listed here too, until its code exists.", ""]
+        out += ["- `%s` (%s)" % (cell(t["path"]), t["track"]) for t in pack["toolingOnly"]]
     for m in pack["modules"]:
         ev, t, br = m["evidence"], m["evidence"]["tests"], m["brief"]
         out += ["", "## %s: %s" % (cell(m["name"]), m["verdict"]), "", "Track: %s. Folder: `%s`. Checked %s." % (m["track"], cell(m["path"]), m["verifiedAt"]), ""]
@@ -972,6 +1010,8 @@ def main(argv=None):
         print("  %s (%s): %s, tests executed: %d, failed %d" % (clean(m["name"], 60), m["track"], m["verdict"], m["evidence"]["tests"]["executed"], m["evidence"]["tests"]["failed"]))
         for r in m["reasons"]:
             print("    - " + clean(r, 300))
+    for t in pack["toolingOnly"]:
+        print("  %s (%s): test tooling, not judged" % (clean(t["name"], 60), t["track"]))
     print("wrote analysis/%s/VERIFICATION.md and VERIFICATION.json" % args.system)
     return 0 if pack["overall"]["verdict"] == "PROVEN" else 1
 

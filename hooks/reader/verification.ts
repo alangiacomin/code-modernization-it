@@ -30,6 +30,8 @@ export type ProofEntry = {
 export type Verification = {
   overall: Verdict | null
   entries: ProofEntry[]
+  /** Built folders that hold only test code and the files that build it: the pack lists them and judges none, so the pane says nothing of them. */
+  tooling: { track: TrackKey; name: string }[]
 }
 
 /** How the module is standing with the proof, for a chip and for the next step. */
@@ -112,8 +114,18 @@ export function parseVerification(text: string): Verification | null {
   }
 
   const overall = isRecord(raw.overall) && typeof raw.overall.verdict === 'string' && VERDICTS.includes(raw.overall.verdict) ? (raw.overall.verdict as Verdict) : null
+  const tooling: Verification['tooling'] = []
 
-  return { overall, entries }
+  for (const item of (Array.isArray(raw.toolingOnly) ? (raw.toolingOnly as unknown[]) : []).slice(0, MAX_ENTRIES)) {
+    const name = isRecord(item) && typeof item.name === 'string' ? plain(item.name, MAX_NAME) : ''
+    const track = isRecord(item) && typeof item.track === 'string' && Object.hasOwn(TRACK_OF, item.track) ? TRACK_OF[item.track] : undefined
+
+    if (name !== '' && track !== undefined) {
+      tooling.push({ track, name })
+    }
+  }
+
+  return { overall, entries, tooling }
 }
 
 /** The pack stamps minutes; a file written in the same minute as the check is not newer than it. */
@@ -121,7 +133,7 @@ const SLACK_MS = 90_000
 
 /**
  * Where a built module stands with the proof. Null when it has no notes and no verdict, so nothing is claimed of a
- * module still being built.
+ * module still being built, and null for a folder the pack lists as test tooling (only test code and build files: nothing to prove).
  *
  * @param verification the file, or null when there is none
  * @param track the track the pane follows
@@ -139,7 +151,9 @@ export function proofOfModule(
   const entry = verification?.entries.find(candidate => candidate.track === track && candidate.name.toLowerCase() === plain(name, MAX_NAME).toLowerCase())
 
   if (entry === undefined) {
-    return hasNotes ? { state: 'none', reason: '' } : null
+    const isTooling = verification?.tooling.some(item => item.track === track && item.name.toLowerCase() === plain(name, MAX_NAME).toLowerCase()) === true
+
+    return hasNotes && !isTooling ? { state: 'none', reason: '' } : null
   }
 
   if (entry.atMs !== null && changedAtMs > entry.atMs + SLACK_MS) {

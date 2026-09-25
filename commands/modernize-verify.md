@@ -20,13 +20,16 @@ The code is `legacy/$system`, often a symlink to where it really lives: say wher
 (the pack calls it `$system-uplifted`; its units are named in the Code and Command lines of `BASELINE.md`).
 **Reimagine:** each service in `modernized/$system-reimagined/`. Name them. With a `$module` (for an uplift, a unit)
 re-run only that one; the pack still judges every built module from its current evidence, never from an earlier run.
+A folder that holds only test code and the files that build it (a parity harness, say) is test tooling: the pack lists it as not judged and leaves it out of the verdict.
 If nothing is built, say so and stop: the next step is the brief's Phase 1 command (`/code-modernization:modernize-status $system`).
 
 ## 2 — Which rules do the tests name?
 
-Rewrite and reimagine: `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/trace_rules.py" $system --module <module>`. A rule counts as
-tested only when a test names its id (`RULE-017`, or `rule017` in a test name); a rule only the notes name is "claimed".
-The pack repeats this: read it to know the gaps, and do not fix them here.
+Rewrite and reimagine: `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/trace_rules.py" $system --module <module>` (after step 3 add `--results <the module's result folder>`;
+before it nothing has run, so a named rule reads "named, not run"). A rule counts as tested only when a test that ran and passed backs it: the id
+(`RULE-017`, or `rule017`) is in the name of a passing test or of its class, or a test file names it on a line not marked skipped or pending and
+that file's class passed. A rule only a skipped, pending or failing test names is "named, not run", and one only the notes name is "claimed":
+neither is tested. The pack repeats this: read it to know the gaps, and do not fix them here.
 
 ## 3 — Run the tests again from clean, and run your own canary
 
@@ -36,7 +39,8 @@ the **full** suite (uplift: the command `BASELINE.md` records; Maven also `-Dmav
 JUnit-style XML where it can write it (Maven writes `target/surefire-reports`; `pytest --junitxml=<file>`;
 `dotnet test --logger "junit;LogFilePath=<file>"` or `trx`; `jest-junit`; `gotestsum --junitfile <file>`) and the raw output
 either way: `<test command> 2>&1 | tee analysis/$system/equivalence/<suite>.test-output.txt`. The pack reads the XML, else the summary
-lines of Maven and Gradle, cargo, pytest, unittest, go test, dotnet test, jest, vitest, ctest and phpunit. A failure caused by this
+lines of Maven and Gradle, cargo, pytest, unittest, go test, dotnet test, jest, vitest, ctest and phpunit. Only the XML lists each test, so only it can
+show that a rule's test ran; a log gives counts. A failure caused by this
 machine (a missing tool, a sandbox limit) is still a failure: say why in the suite `note`. If the toolchain will not run here, record the
 suite with `"executed": 0` and a `note`: nothing executed is NOT PROVEN, not a pass.
 
@@ -73,8 +77,12 @@ and `cases.json` are the development cases: never touch them.
    refuses are left out. Rewrite: read `cases.json`, `BUSINESS_RULES.md` and the notes' deliberate deviations (an input that hits one
    is a difference for a person to approve, not a defect). Uplift: no rules or cases exist, so read `DELTA_CATALOG.md`; for a library
    an input is one call with one argument set, saved as one output per call or per site. Take the edge cases the rules or deltas
-   mention and add boundaries (zero, one either side of a threshold, the largest size), empty and huge values, malformed records,
-   unusual order.
+   mention and add boundaries (zero, one either side of a threshold, the largest size), empty and huge values, unusual order.
+   **Malformed records** (a field that breaks the input's own format: blanks or letters in a numeric field, a stray tab, a wrong
+   length, a blank line) have no end: every round can invent new ones and the old system tolerates each in its own odd way. Read
+   `analysis/$system/INTENT.md` ("What must stay true"). Try malformed records only when it says behavior must match exactly,
+   quirks included, or when there is no `INTENT.md`; otherwise keep the fresh inputs to records that are valid for the input's format,
+   and add one line to `leftOut` saying malformed records were not tried and why, so a person sees where the check stops.
 3. Run the legacy and the new code on each (uplift: the old and the new runtime, same driver and flags, never while the suite runs,
    the old side built from a scratch copy of `legacy/$system`, never inside it). If a runner only loops over the development cases,
    call its single-case script or copy it into `fresh/`. Write only under `analysis/$system/equivalence/fresh/`, plus
@@ -114,7 +122,7 @@ every suite and canary: a file the pack cannot parse is no evidence. `legacy.ran
 here. `note` is for anything a reader needs, cause first, under 250 characters. Then run
 `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/proof_pack.py" $system $module` (no `$module` for all). It writes `analysis/$system/VERIFICATION.md`
 and `VERIFICATION.json`; exit 1 only means "not PROVEN". Show the user the verdict per module, the reasons word for word, for a rewrite
-the P0 rule table, **what this does not prove**, and the blank sign-off block. Do not soften a reason or change a verdict; if you think
+the P0 rule table, any folder listed as test tooling (not judged), **what this does not prove**, and the blank sign-off block. Do not soften a reason or change a verdict; if you think
 a rule is wrong, say so and leave the file as it is.
 
 ## Finish
@@ -123,7 +131,7 @@ Refresh the report (`python3 "${CLAUDE_PLUGIN_ROOT}/scripts/build_report.py" $sy
 missing, say so in one line and carry on), then name the next step. **PARTLY PROVEN or NOT PROVEN:** turn each reason, in order, into a
 command. A failure caused by this machine: run the suite where the tool works (a terminal outside the sandbox, or CI), then run this
 command again. A difference the notes call intended: a person records it (once per input with `"approvedInputs": {"F23": "why"}` at the top of
-`fresh-cases.json`, or `approvedDifference` in one case, or the table in `BASELINE.md`); you never do. P0 rules no test names: add the rule id to each test that pins it, then run this again. Any other failing
+`fresh-cases.json`, or `approvedDifference` in one case, or the table in `BASELINE.md`); you never do. P0 rules "named, not run" or named by no test: the test that pins each one must run and pass (write or enable it, keep its result file); adding an id or dropping a skip marker without that proves nothing. Then run this again. Any other failing
 test or difference: `/code-modernization:modernize-transform $system <module>`, or for an uplift `/code-modernization:modernize-uplift $system`
 (also for a baseline typed by hand, which is measured again in its Step 4, and for a silent delta no test names, which gets a
 characterization test there). Removed or changed test files are a person's review, never yours to undo.

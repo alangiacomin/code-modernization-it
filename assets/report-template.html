@@ -323,7 +323,7 @@ function partEquiv(eq) {
 /* proof:start -- the proof section (VERIFICATION.json). Text only ever reaches the page through h() and text nodes. */
 var VERDICT_TONE = {'PROVEN': 'ok', 'PARTLY PROVEN': 'warn', 'NOT PROVEN': 'bad'}, VERDICT_MARK = {'PROVEN': '✓ ', 'PARTLY PROVEN': '◐ ', 'NOT PROVEN': '✗ '};
 var CHECK_WORD = {pass: 'pass', gap: 'not proven', fail: 'FAIL', na: 'not applicable'}, CHECK_TONE = {pass: 'ok', gap: 'warn', fail: 'bad', na: ''};
-var RULE_TONE = {'tested': 'ok', 'claimed only': 'warn', 'code only': 'warn', 'none': 'bad'};
+var RULE_TONE = {'tested': 'ok', 'named, not run': 'bad', 'claimed only': 'warn', 'code only': 'warn', 'none': 'bad'};
 function own(map, key, dflt) { return Object.prototype.hasOwnProperty.call(map, key) ? map[key] : dflt; }
 function badge(text, tn) { return {badge: true, text: text, tone: tn}; }
 function plainTable(label, head, rows) {
@@ -340,7 +340,7 @@ function proofModule(m) {
   out.push(h('ul', {class: 'chips'}, [chip('tests executed: ' + fmt(t.executed || 0)), chip('failed: ' + fmt(t.failed || 0)), chip('skipped: ' + fmt(t.skipped || 0))]));
   if (m.hasRules) {
     var c = m.p0Counts || {};
-    out.push(h('h4', null, ['P0 business rules: ' + fmt(c.tested || 0) + ' tested, ' + fmt(c.claimedOnly || 0) + ' claimed only, ' + fmt(c.none || 0) + ' with no test']));
+    out.push(h('h4', null, ['P0 business rules: ' + fmt(c.tested || 0) + ' tested, ' + fmt(c.notRun || 0) + ' named but not run, ' + fmt(c.claimedOnly || 0) + ' claimed only, ' + fmt(c.none || 0) + ' with no test']));
     if ((m.p0 || []).length) out.push(plainTable('P0 rules', ['Rule', 'Name', 'Confidence', 'Result', 'Tests', 'Code', 'A test that names it'],
       m.p0.map(function (r) { return [r.id, r.name, r.confidence || '?', badge(r.status, own(RULE_TONE, r.status, 'bad')), fmt(r.tests), fmt(r.main), r.tests ? r.where : '']; })));
   }
@@ -386,6 +386,7 @@ function partProof(pv) {
   var lg = pv.legacy || {};
   if (lg.path) out.push(h('p', {class: 'note'}, ['Legacy source: ' + lg.path + (lg.target ? ' (a link to ' + lg.target + ')' : '') + '. ' + (lg.ran === true ? 'It could run here.' : lg.ran === false ? 'It could not run here, so the proof is trace-based.' : 'Whether it could run here is not stated.')]));
   (pv.modules || []).forEach(function (m) { out = out.concat(proofModule(m)); });
+  if ((pv.tooling || []).length) out.push(h('p', {class: 'note'}, ['Test tooling (not judged): ' + pv.tooling.map(function (t) { return t.name; }).join(', ') + '. It holds tests and no code of its own, so it gets no verdict.']));
   var so = pv.signoff || {}, line = function (v, dflt) { return v || dflt; };
   out.push(h('h3', null, ['Sign-off']), h('p', {class: 'note'}, ['A person fills this in. Claude leaves it blank.']),
     plainTable('Sign-off', ['Field', 'Entry'], [['Name', line(so.name, '________________')], ['Role', line(so.role, '________________')], ['Date', line(so.date, '__________')], ['Decision', line(so.decision, 'accept / accept with conditions / reject')]]));
