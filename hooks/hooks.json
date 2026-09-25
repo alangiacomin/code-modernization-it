@@ -1,0 +1,4 @@
+{
+  "description": "The modernization pane and estate map, x-ray reads, the rule review deck, the sign-off dialog and the fleet view",
+  "modules": ["./register.ts"]
+}
