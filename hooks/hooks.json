@@ -21,6 +21,48 @@
             "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/telemetry.sh\" state",
             "timeout": 10,
             "asyncRewake": true
+          },
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/telemetry.sh\" run",
+            "timeout": 10,
+            "asyncRewake": true
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/telemetry.sh\" health",
+            "timeout": 10,
+            "asyncRewake": true
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/telemetry.sh\" failure",
+            "timeout": 10,
+            "asyncRewake": true
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/scripts/telemetry.sh\" failure",
+            "timeout": 10,
+            "asyncRewake": true
           }
         ]
       }

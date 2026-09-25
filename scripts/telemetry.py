@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Usage counts for the code-modernization plugin. Whole numbers only, never text.
 
-    telemetry.py command                 UserPromptSubmit hook: which of the plugin's commands was typed
+    telemetry.py command                 UserPromptSubmit hook: which of the plugin's commands was typed, and on what kind of machine
     telemetry.py state                   Stop hook: how far the newest system under analysis/ has got
+    telemetry.py run                     Stop hook: how the last rule extraction went (agents started, lost, unverified)
+    telemetry.py failure                 hook after a python command, a failed tool call or a failed model call: what kind of failure
     telemetry.py show [DIR] [--prompt TEXT] [--json]
                                          print what the hooks would send for the workspace DIR (default: this folder)
 
@@ -23,11 +25,13 @@ import hashlib
 import itertools
 import json
 import os
+import platform
 import re
 import signal
 import stat
 import sys
 import tempfile
+import threading
 import time
 
 sys.dont_write_bytecode = True  # a hook must not leave files in the plugin's own folder
@@ -39,9 +43,10 @@ MAX_KEYS, CAP = 20, 10 ** 9
 TRUE = {"1", "true", "on", "yes"}
 # The most a key can carry: a hostile artifact cannot make a count bigger than this. Counts from 100 up are rounded to two
 # significant figures; enumerations and the step bitmask are exact.
-LIMITS = {"pv": 999999, "cmd": 99, "perm": 6, "has_source": 1, "fresh": 1, "systems": 99, "goal": 4, "lang": 99, "done": 65535, "phases": 99}
+LIMITS = {"pv": 999999, "cmd": 99, "perm": 6, "has_source": 1, "fresh": 1, "systems": 99, "goal": 4, "lang": 99, "done": 65535, "phases": 99,
+          "os": 9, "py": 9, "pyv": 999, "pathf": 7, "tool": 99, "kind": 99, "api": 99, "err": 99, "err_at": 99999}
 COUNT_LIMIT = 10 ** 7
-EXACT = {"pv", "cmd", "perm", "has_source", "fresh", "goal", "lang", "done"}
+EXACT = {"pv", "cmd", "perm", "has_source", "fresh", "goal", "lang", "done", "os", "py", "pyv", "pathf", "tool", "kind", "api", "err", "err_at"}
 NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}")
 LINE_WIDTH = 600  # longer lines are cut before anything is parsed, so no artifact can make a pattern slow
 
@@ -51,6 +56,32 @@ COMMANDS = {"": 1, "preflight": 2, "assess": 3, "map": 4, "extract-rules": 5, "r
 PANE = {"panel": 20, "review-pane": 21, "sign": 22}
 OTHER_COMMAND = 99
 PERMISSION_MODES = {"default": 1, "acceptEdits": 2, "plan": 3, "auto": 4, "bypassPermissions": 5, "dontAsk": 6}
+TOOLS = {"Bash": 1, "Read": 2, "Edit": 3, "Write": 3, "MultiEdit": 3, "NotebookEdit": 3, "Glob": 4, "Grep": 4, "Agent": 5, "Task": 5, "Workflow": 6,
+         "AskUserQuestion": 7, "Skill": 8, "WebFetch": 9, "WebSearch": 9}
+# What went wrong, decided here from the text of a failure and never sent: first match wins. 1-5 are about the interpreter and the plugin's own scripts.
+FAILURE_KINDS = [
+    (2, re.compile(r"python was not found|run without arguments to install from the microsoft store", re.I)),
+    (3, re.compile(r"xcode-select: note|no developer tools were found|command line developer tools", re.I)),
+    (1, re.compile(r"\b(?:python3?|py)(?:\.exe)?: (?:command )?not found|command not found: (?:python3?|py)\b|'(?:python3?|py)' is not recognized|python3?: no such file|env: .?python3?.?: no such file", re.I)),
+    (4, re.compile(r"syntaxerror|requires python 3|invalid syntax", re.I)),
+    (6, re.compile(r"permission to use|was denied|denied by|not allowed|blocked by|auto mode", re.I)),
+    (7, re.compile(r"eacces|permission denied|access is denied", re.I)),
+    (8, re.compile(r"timed out|timeout|etimedout", re.I)),
+    (11, re.compile(r"enospc|no space left|out of memory|cannot allocate memory|disk quota", re.I)),
+    (10, re.compile(r"econnrefused|enotfound|could not resolve host|certificate|\bssl\b|proxy|unauthori[sz]ed|\b401\b|\b403\b|\b429\b", re.I)),
+    (9, re.compile(r"no such file|cannot find the path|enoent|does not exist|not found", re.I)),
+    (12, re.compile(r"scriptpath|unknown tool|workflow|subagent", re.I)),
+]
+API_ERRORS = [
+    (1, re.compile(r"rate.?limit|\b429\b", re.I)),
+    (2, re.compile(r"authenticat|unauthori[sz]ed|invalid.?api.?key|\b40[13]\b|oauth", re.I)),
+    (3, re.compile(r"billing|credit|payment|quota", re.I)),
+    (6, re.compile(r"max.?output|max_tokens|too long", re.I)),
+    (7, re.compile(r"timeout|timed out|network|econn|connection", re.I)),
+    (5, re.compile(r"server.?error|overloaded|\b5\d\d\b|internal", re.I)),
+    (4, re.compile(r"invalid.?request|\b400\b|unrecognized_model|not_found", re.I)),
+]
+ERROR_CODES = [(UnicodeError, 8), (KeyError, 1), (ValueError, 2), (OSError, 3), (TypeError, 4), (AttributeError, 5), (RecursionError, 6), (MemoryError, 7)]
 COMMAND_RE = re.compile(r"^/(?P<ns>code-modernization:)?modernize(?:-(?P<verb>[a-z][a-z-]*))?(?=\s|$)")
 
 GOALS = {"understand": 1, "uplift": 2, "transform": 3, "reimagine": 4}
@@ -110,8 +141,27 @@ MEANING = collections.OrderedDict([
     ("v_not", "modules judged NOT PROVEN"),
     ("sec_crit", "critical security findings"),
     ("sec_high", "high security findings"),
+    ("os", "system: 1 macOS, 2 Linux, 3 Windows, 4 Windows subsystem for Linux, 0 other"),
+    ("py", "how python worked: 0 python3 ran, 1 none found, 2 macOS developer-tools stub, 3 python3 present but broken (the Windows Store stub), "
+           "4 python3 unusable but python or py ran, 5 too old, 6 the script crashed"),
+    ("pyv", "python version as major*100 + minor (311 is 3.11)"),
+    ("pathf", "the folder's path: 1 has a space, 2 has non-ASCII characters, 4 is over 200 characters (added up)"),
+    ("tool", "the tool that failed: 1 Bash, 2 Read, 3 Edit or Write, 4 Glob or Grep, 5 agent, 6 Workflow, 7 asking the person, 8 skill, 9 web, 10 a connector, 99 other"),
+    ("kind", "what went wrong: 1 python or another interpreter missing, 2 the Windows Store python stub, 3 the macOS developer-tools stub, 4 python too old or a syntax error, "
+            "5 one of the plugin's scripts raised an error, 6 blocked by a permission rule or policy, 7 a file permission was denied, 8 timed out, 9 a file or folder was not found, "
+            "10 network, certificate or sign-in, 11 disk or memory, 12 workflow or agent trouble, 99 other"),
+    ("api", "a model call ended a turn: 1 rate limit, 2 sign-in failed, 3 billing, 4 invalid request, 5 server error or overloaded, 6 output too long, 7 network or timeout, 99 unknown"),
+    ("err", "the plugin's own script raised: 1 KeyError, 2 ValueError, 3 OSError, 4 TypeError, 5 AttributeError, 6 RecursionError, 7 MemoryError, 8 UnicodeError, 99 other"),
+    ("err_at", "the line of telemetry.py where it raised"),
+    ("agents", "agents the last rule extraction started"),
+    ("wf_failed", "modules or agents that extraction lost"),
+    ("wf_skip", "modules that extraction skipped"),
+    ("wf_unver", "rules that extraction could not verify"),
 ])
-COMMAND_KEYS = ("pv", "cmd", "perm", "has_source", "fresh", "systems", "goal", "done")
+COMMAND_KEYS = ("pv", "cmd", "perm", "has_source", "fresh", "systems", "goal", "done", "os", "py", "pyv", "pathf")
+RUN_KEYS = ("pv", "agents", "wf_failed", "wf_skip", "wf_unver")
+FAILURE_KEYS = ("pv", "os", "py", "pyv", "pathf", "tool", "kind", "api")
+ERROR_KEYS = ("pv", "os", "py", "pyv", "err", "err_at")
 STATE_KEYS = ("pv", "goal", "lang", "done", "map_kloc", "rules", "p0", "rev_ok", "rev_wrong", "phases", "built", "eq_cases",
               "eq_diff", "eq_appr", "v_proven", "v_partly", "v_not", "sec_crit", "sec_high")
 
@@ -322,6 +372,39 @@ def snapshot(cwd, system):
     return out
 
 
+def os_code():
+    """1 macOS, 2 Linux, 3 Windows, 4 WSL, 0 other. The shell wrapper knows best (uname); this is the fallback."""
+    given = os.environ.get("CODE_MODERNIZATION_OS", "")
+    if given.isdigit():
+        return min(int(given), 9)
+    system = platform.system().lower()
+    if system == "linux":
+        try:
+            with open("/proc/version", encoding="utf-8", errors="replace") as fh:
+                return 4 if "microsoft" in fh.read().lower() else 2
+        except OSError:
+            return 2
+    return {"darwin": 1, "windows": 3}.get(system, 0)
+
+
+def python_status():
+    """0 when python3 itself ran this; the shell wrapper says 4 when it had to fall back to python or py."""
+    given = os.environ.get("CODE_MODERNIZATION_PY", "")
+    return min(int(given), 9) if given.isdigit() else 0
+
+
+def path_flags(cwd):
+    """The bits of a folder path that break scripts on Windows: 1 a space, 2 a non-ASCII character, 4 over 200 characters."""
+    given = os.environ.get("CODE_MODERNIZATION_PATHF", "")
+    if given.isdigit():
+        return min(int(given), 7)
+    return (1 if " " in cwd else 0) + (2 if any(ord(c) > 126 for c in cwd) else 0) + (4 if len(cwd) > 200 else 0)
+
+
+def environment(cwd):
+    return [("os", os_code()), ("py", python_status()), ("pyv", sys.version_info[0] * 100 + sys.version_info[1]), ("pathf", path_flags(cwd))]
+
+
 def system_word(words):
     """The first plain word of a command's arguments, which is the system's name (a flag's value is not)."""
     skip = False
@@ -360,7 +443,65 @@ def command_metrics(prompt, cwd, permission_mode=None):
     perm = PERMISSION_MODES.get(permission_mode, 0) if isinstance(permission_mode, str) else 0
     return collections.OrderedDict([("pv", plugin_version()), ("cmd", cmd), ("perm", perm), ("has_source", int("--source" in words)),
                                     ("fresh", int(snap is None)), ("systems", min(len(systems), 99)),
-                                    ("goal", snap["goal"] if snap else 0), ("done", snap["done"] if snap else 0)])
+                                    ("goal", snap["goal"] if snap else 0), ("done", snap["done"] if snap else 0)] + environment(cwd))
+
+
+def health_metrics(cwd):
+    """Once per version and machine (the shell wrapper keeps count): what the plugin is running on."""
+    return collections.OrderedDict([("pv", plugin_version())] + environment(cwd))
+
+
+def run_metrics(cwd):
+    """How the newest system's last rule extraction went, from the statistics the workflow wrote, or None."""
+    for _, system in systems_in(cwd)[:5]:
+        src = br.Source(cwd, system)
+        result, _ = src.json(os.path.join(src.adir, "rules_result.json"), "rules_result.json")
+        stats = result.get("stats") if isinstance(result, dict) and isinstance(result.get("stats"), dict) else None
+        if stats is None:
+            continue
+        size = lambda key: len(stats[key]) if isinstance(stats.get(key), list) else 0  # noqa: E731
+        return collections.OrderedDict([("pv", plugin_version()), ("agents", whole(stats.get("agents"))), ("wf_failed", size("failedModules") + size("droppedModules")),
+                                        ("wf_skip", size("skippedModules")), ("wf_unver", whole(stats.get("unverified")))])
+    return None
+
+
+def tool_code(name):
+    name = str(name or "")
+    return TOOLS.get(name) or (10 if name.startswith("mcp__") else 99)
+
+
+def failure_kind(text):
+    """A code for what went wrong, decided from the failure's own text (which is never sent), or None when it says nothing useful."""
+    text = str(text or "")[:8000]
+    if "Traceback" in text and ("code-modernization" in text or "scripts/" in text or "scripts\\" in text):
+        return 5
+    for code, pattern in FAILURE_KINDS:
+        if pattern.search(text):
+            return code
+    return None
+
+
+def failure_metrics(data, cwd):
+    """One failure as numbers: a failed tool call, or a model call that ended a turn. None when there is nothing to say."""
+    event, session = str(data.get("hook_event_name") or ""), str(data.get("session_id") or "")
+    base = [("pv", plugin_version())] + environment(cwd)
+    if event == "StopFailure":
+        text = " ".join(str(data.get(k) or "") for k in ("error", "error_type", "error_details", "message"))[:2000]
+        api = next((code for code, pattern in API_ERRORS if pattern.search(text)), 99)
+        tag, extra = "api%d" % api, [("api", api)]
+    else:
+        if data.get("is_interrupt") is True:
+            return None
+        tool, error = tool_code(data.get("tool_name")), str(data.get("error") or "")
+        kind = failure_kind(error)
+        if kind is None:
+            if tool == 1 and re.fullmatch(r"\s*Exit code \d+\s*", error):
+                return None  # a command that simply exited non-zero, often on purpose
+            kind = 99
+        tag, extra = "t%dk%d" % (tool, kind), [("tool", tool), ("kind", kind)]
+    if remember("fail|%s|%s" % (session, tag), "1") != "new":  # once per session and kind, so a loop of failures is one number
+        return None
+    return collections.OrderedDict(base + extra)
 
 
 def state_metrics(cwd):
@@ -445,7 +586,7 @@ def remember(key, digest):
             return "same"
         seen.pop(key, None)
         seen[key] = digest
-        seen = dict(list(seen.items())[-50:])
+        seen = dict(list(seen.items())[-200:])
         tmp = "%s.%d" % (file, os.getpid())
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(seen, fh)
@@ -461,14 +602,22 @@ def digest_of(metrics):
 
 def hook(mode):
     """Run one hook. Whatever an artifact holds, a turn is never held up for more than a few seconds."""
-    if not hasattr(signal, "SIGALRM"):
-        return run_hook(mode)
-    signal.signal(signal.SIGALRM, lambda *_: os._exit(0))
-    signal.alarm(3)
-    try:
-        run_hook(mode)
-    finally:
-        signal.alarm(0)
+    if hasattr(signal, "SIGALRM"):
+        signal.signal(signal.SIGALRM, lambda *_: os._exit(0))
+        signal.alarm(3)
+        try:
+            run_hook(mode)
+        finally:
+            signal.alarm(0)
+    else:  # Windows has no alarm signal: a timer thread gives up instead
+        timer = threading.Timer(3, os._exit, [0])
+        timer.daemon = True
+        timer.start()
+        try:
+            run_hook(mode)
+        finally:
+            timer.cancel()
+            timer.join(1)
 
 
 def run_hook(mode):
@@ -485,11 +634,16 @@ def run_hook(mode):
     if mode == "command":
         metrics = command_metrics(data.get("prompt"), cwd, data.get("permission_mode"))
         why = "not one of the plugin's commands"
+    elif mode == "health":
+        metrics, why = health_metrics(cwd), ""
+    elif mode == "failure":
+        metrics = failure_metrics(data, cwd)
+        why = "nothing worth counting, or the same kind was already sent this session"
     else:
-        metrics = state_metrics(cwd)
+        metrics = run_metrics(cwd) if mode == "run" else state_metrics(cwd)
         why = "the plugin has left no files here"
         if metrics is not None:
-            key = hashlib.sha1(os.path.realpath(cwd).encode()).hexdigest()[:16]
+            key = hashlib.sha1((os.path.realpath(cwd) + mode).encode()).hexdigest()[:16]
             status = remember(key, digest_of(ok(metrics)))
             if status != "new":
                 metrics, why = None, "the counts are the same as last time" if status == "same" else "the state file cannot be written"
@@ -539,12 +693,23 @@ def show(args):
           "nothing: that is not one of the plugin's commands")
 
 
+def report_error(err, line):
+    """The plugin's own script raised: send which kind and where, once, never the message."""
+    if off_reason():
+        return
+    code = next((c for kind, c in ERROR_CODES if isinstance(err, kind)), 99)
+    if remember("err|%s|%s|%s" % (plugin_version(), code, line), "1") == "new":
+        print(json.dumps({"metrics": ok(collections.OrderedDict([("pv", plugin_version()), ("os", os_code()), ("py", python_status()),
+                                                                 ("pyv", sys.version_info[0] * 100 + sys.version_info[1]), ("err", code), ("err_at", line)]))},
+                         separators=(",", ":")), flush=True)
+
+
 def main(argv):
     mode = argv[1] if len(argv) > 1 else ""
     try:
         if mode == "show":
             show(argv[2:])
-        elif mode in ("command", "state"):
+        elif mode in ("command", "state", "run", "failure", "health"):
             hook(mode)
         else:
             print(__doc__)
@@ -554,7 +719,12 @@ def main(argv):
         tb = err.__traceback__
         while tb and tb.tb_next:
             tb = tb.tb_next
-        note("%s: error %s at line %s" % (mode, type(err).__name__, tb.tb_lineno if tb else "?"))
+        line = tb.tb_lineno if tb else 0
+        note("%s: error %s at line %s" % (mode, type(err).__name__, line))
+        try:
+            report_error(err, line)
+        except Exception:  # reporting a problem must not become one
+            pass
     return 0
 
 

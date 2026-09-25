@@ -139,10 +139,15 @@ Helpful but optional (run `preflight` to check them all): [`scc`](https://github
 
 The plugin counts how it is used, so the next version can be better. It sends **whole numbers only**: never code, file or system names, paths, prompts or anything you typed. Counts of 100 or more are rounded to two significant figures (17,727 is sent as 18,000), so a number says roughly how big, not exactly which system. It sends them through Claude Code's own telemetry, so nothing is sent to Anthropic when that is off. The plugin itself makes no network call and adds no identifier; the one file it writes is a small `telemetry-state.json` of hashes in its own data folder, so the same counts are not sent twice.
 
-Two hooks do it, and only in a folder where you are using the plugin (you typed one of its commands, or the folder holds an `analysis/<name>/` folder with files it wrote, such as `INTENT.md` or `PREFLIGHT.md`):
+Five small hooks do it:
 
-- **When you type one of the plugin's commands:** which command, and how far that system had got.
-- **When a turn ends and the counts changed:** how far the newest system has got.
+- **When you type one of the plugin's commands:** which command, how far that system had got, and what it is running on (operating system, python status and version, and whether the folder's path has a space or unusual characters).
+- **When a turn ends and the counts changed:** how far the newest system has got, and how the last rule extraction went (agents started, lost, unverified). Only in a folder where the plugin has left files such as `INTENT.md` or `PREFLIGHT.md`.
+- **When something fails:** a tool call that errored, or a model call that ended a turn. The failure's text is read on your machine to choose one code from a fixed list (python missing, blocked by a permission rule, timed out, file not found, rate limit and so on) and only the code is sent, at most once per kind per session. Only where the plugin is in use or the failing command names it.
+- **When one of the plugin's own scripts raises an error:** which kind of error and which line, never its message.
+- **Once per plugin version on each machine, at the start of a session:** what the plugin runs on (the same operating system, python and path numbers), so that machines where nobody gets as far as typing a command are still counted once. This is the one number that is sent without you using the plugin.
+
+If python is missing, is the Windows Store placeholder, is too old or crashes, the small shell script that starts the hooks says so in numbers itself, because python cannot report its own absence. If it finds `python` or the `py` launcher working, it uses that instead.
 
 | Key | What it counts |
 | --- | --- |
@@ -163,10 +168,21 @@ Two hooks do it, and only in a folder where you are using the plugin (you typed 
 | `eq_cases`, `eq_diff`, `eq_appr` | old-versus-new comparison cases run, differences or missing outputs nobody approved, differences a person approved (counted from the case list, the way the report counts them) |
 | `v_proven`, `v_partly`, `v_not` | modules judged PROVEN, PARTLY PROVEN and NOT PROVEN |
 | `sec_crit`, `sec_high` | critical and high security findings |
+| `os` | system: 1 macOS, 2 Linux, 3 Windows, 4 Windows subsystem for Linux, 0 other |
+| `py` | how python worked: 0 python3 ran, 1 none found, 2 macOS developer-tools stub, 3 python3 present but broken (the Windows Store placeholder), 4 python3 unusable but python or py ran, 5 too old, 6 the script crashed |
+| `pyv` | python version as major*100 + minor (311 is 3.11) |
+| `pathf` | the folder's path: 1 has a space, 2 has non-ASCII characters, 4 is over 200 characters (added up) |
+| `tool` | the tool that failed: 1 Bash, 2 Read, 3 Edit or Write, 4 Glob or Grep, 5 agent, 6 Workflow, 7 asking the person, 8 skill, 9 web, 10 a connector, 99 other |
+| `kind` | what went wrong: 1 python or another interpreter missing, 2 the Windows Store python stub, 3 the macOS developer-tools stub, 4 python too old or a syntax error, 5 one of the plugin's scripts raised an error, 6 blocked by a permission rule or policy, 7 a file permission was denied, 8 timed out, 9 a file or folder was not found, 10 network, certificate or sign-in, 11 disk or memory, 12 workflow or agent trouble, 99 other |
+| `api` | a model call ended a turn: 1 rate limit, 2 sign-in failed, 3 billing, 4 invalid request, 5 server error or overloaded, 6 output too long, 7 network or timeout, 99 unknown |
+| `err`, `err_at` | the plugin's own script raised: 1 KeyError, 2 ValueError, 3 OSError, 4 TypeError, 5 AttributeError, 6 RecursionError, 7 MemoryError, 8 UnicodeError, 99 other; and the line of `telemetry.py` where it raised |
+| `agents`, `wf_failed`, `wf_skip`, `wf_unver` | agents the last rule extraction started, modules or agents it lost, modules it skipped, rules it could not verify |
 
 To see exactly what would be sent for your workspace, before anything is sent, run `python3 scripts/telemetry.py show /path/to/workspace` from the plugin's folder (add `--prompt "/code-modernization:modernize-verify billing"` to see a command's counts).
 
 To turn it off, use any one of these: the plugin's **Usage counts** option, `CODE_MODERNIZATION_TELEMETRY=0` in your environment (anything but an explicit `1` or `on` counts as off), or Claude Code's own `DISABLE_TELEMETRY=1` (or `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`). Nothing is sent while any of them is set.
+
+**What these numbers cannot see.** A machine where the shell cannot start the hooks at all (for example Windows without Git Bash) sends nothing, and neither does a machine that never starts a session with the plugin enabled, so failure rates here are a floor, not a total. Read them next to install counts and Claude Code's own hook-failure events.
 
 If nothing seems to be sent when you expect it, set `CODE_MODERNIZATION_TELEMETRY_DEBUG=1`: each hook run then adds one line saying what it decided to `telemetry-debug.log` in the plugin's data folder.
 

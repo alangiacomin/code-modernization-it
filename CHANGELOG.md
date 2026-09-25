@@ -12,4 +12,4 @@ Each release gets a new number in `.claude-plugin/plugin.json`; Claude Code only
 - **Proportional rule extraction.** The same rule found in several files is folded into one, and the number of rules follows the size of the code.
 - **A one-page report** (`REPORT.html`, works offline) with the proof, the rules, the map and a next step you can copy.
 - **A live progress pane** (early access, terminal): the estate map, the rule review deck, the sign-off dialog and the proof at a glance.
-- **Usage counts** (whole numbers only, off by switch): see the Telemetry section of the README.
+- **Usage counts** (whole numbers only, off by switch): which commands run, how far a system gets, what the plugin runs on (operating system, python status, path problems on Windows), and which kinds of failure happen (python missing, blocked by a permission rule, model errors, the plugin's own script errors). Once per version and machine at session start it also says what it runs on. See the Telemetry section of the README.

@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest import mock
@@ -324,12 +325,13 @@ class Sending(Base):
             self.hook("command", {"cwd": self.ws, "prompt": "/modernize"})
             with mock.patch.dict(os.environ, {"CODE_MODERNIZATION_TELEMETRY": "0"}):
                 self.hook("state", {"cwd": self.ws})
-            with mock.patch.object(tm, "state_metrics", side_effect=KeyError("x")), mock.patch.object(sys, "stdin", io.StringIO("{}")):
+            with mock.patch.object(tm, "state_metrics", side_effect=KeyError("x")), mock.patch.object(sys, "stdin", io.StringIO("{}")), \
+                    contextlib.redirect_stdout(io.StringIO()):
                 tm.main(["telemetry.py", "state"])
         with open(log, encoding="utf-8") as fh:
             text = fh.read()
         for want in ("state: sent 19 values", "state: not sent, the counts are the same as last time", "state: not sent, the plugin has left no files here",
-                     "command: not sent, not one of the plugin's commands", "command: sent 8 values", "state: not sent, CODE_MODERNIZATION_TELEMETRY is off",
+                     "command: not sent, not one of the plugin's commands", "command: sent 12 values", "state: not sent, CODE_MODERNIZATION_TELEMETRY is off",
                      "state: error KeyError at line"):
             self.assertIn(want, text)
         self.assertNotIn(self.tmp, text)
@@ -483,6 +485,142 @@ class Hardening(Base):
             self.assertEqual(signal.alarm(0), 0)
 
 
+class Environment(Base):
+    """What the plugin says about the machine it runs on."""
+
+    def test_the_shell_wrappers_answers_are_used_and_bounded(self):
+        with mock.patch.dict(os.environ, {"CODE_MODERNIZATION_OS": "3", "CODE_MODERNIZATION_PY": "4", "CODE_MODERNIZATION_PATHF": "5"}):
+            got = tm.command_metrics("/modernize", self.ws)
+        self.assertEqual((got["os"], got["py"], got["pathf"]), (3, 4, 5))
+        self.assertEqual(got["pyv"], sys.version_info[0] * 100 + sys.version_info[1])
+        with mock.patch.dict(os.environ, {"CODE_MODERNIZATION_OS": "77", "CODE_MODERNIZATION_PY": "-1", "CODE_MODERNIZATION_PATHF": "x"}):
+            got = tm.command_metrics("/modernize", self.ws)
+        self.assertEqual((got["os"], got["py"]), (9, 0))
+        self.assertIn(got["os"], range(0, 10))
+
+    def test_this_machine_is_recognised_without_the_wrapper(self):
+        self.assertIn(tm.os_code(), (1, 2, 3, 4))
+        self.assertEqual(tm.python_status(), 0)
+
+    def test_a_path_that_breaks_scripts_is_flagged_in_bits(self):
+        self.assertEqual([tm.path_flags(p) for p in ("/plain/path", "/has a space", "/caf\u00e9", "/a b/caf\u00e9", "/" + "x" * 250, "/a b/caf\u00e9/" + "x" * 250)],
+                         [0, 1, 2, 3, 4, 7])
+
+    def test_health_carries_only_the_environment(self):
+        got = json.loads(self.hook("health", {"cwd": self.ws}))["metrics"]
+        self.assertEqual(sorted(got), sorted(tm.HEALTH_KEYS if hasattr(tm, "HEALTH_KEYS") else ["pv", "os", "py", "pyv", "pathf"]))
+        self.assertTrue(all(type(v) is int for v in got.values()))
+
+
+class Failures(Base):
+    """A failure becomes a tool number and a kind number. Its text is read here and never sent."""
+
+    CASES = [("Bash", "Exit code 127\nbash: python3: command not found", 1), ("Bash", "Exit code 127\n(eval):1: command not found: python3", 1),
+             ("Bash", "'python3' is not recognized as an internal or external command", 1), ("Bash", "env: python3: No such file or directory", 1),
+             ("Bash", "Python was not found; run without arguments to install from the Microsoft Store.", 2),
+             ("Bash", "xcode-select: note: no developer tools were found at '/Applications/Xcode.app'", 3),
+             ("Bash", "Exit code 1\n  File \"x.py\", line 3\nSyntaxError: invalid syntax", 4),
+             ("Bash", "Traceback (most recent call last):\n  File \"/x/code-modernization/1.0.0/scripts/build_report.py\", line 9\nKeyError: 'a'", 5),
+             ("Edit", "Permission for this action was denied by the auto mode classifier", 6), ("Bash", "Permission to use Bash with command x has been denied.", 6),
+             ("Write", "EACCES: permission denied, open '/x'", 7), ("Bash", "Exit code 124\ncommand timed out after 120s", 8),
+             ("Read", "File does not exist. Note: your current working directory is /x.", 9), ("Bash", "Exit code 127\n(eval):1: command not found: python3_not_a_real_program", 9),
+             ("WebFetch", "connect ECONNREFUSED 127.0.0.1:443", 10), ("Bash", "npm ERR! 401 Unauthorized", 10), ("Bash", "ENOSPC: no space left on device", 11),
+             ("Workflow", "scriptPath must be inside the working directory", 12), ("Read", "something nobody has seen before", 99)]
+
+    def fail(self, tool, error, session="s1", **more):
+        return tm.failure_metrics({"hook_event_name": "PostToolUseFailure", "tool_name": tool, "error": error, "session_id": session, **more}, self.ws)
+
+    def test_each_kind_of_failure_gets_its_code(self):
+        for tool, text, want in self.CASES:
+            self.assertEqual(tm.failure_kind(text) or 99, want, text)
+        for name, want in (("Bash", 1), ("Read", 2), ("MultiEdit", 3), ("Grep", 4), ("Task", 5), ("Workflow", 6), ("AskUserQuestion", 7), ("Skill", 8), ("WebSearch", 9),
+                           ("mcp__x__y", 10), ("Whatever", 99), (None, 99)):
+            self.assertEqual(tm.tool_code(name), want, name)
+
+    def test_a_failure_is_numbers_only_and_once_per_kind_per_session(self):
+        first = self.fail("Bash", "Exit code 127\nbash: python3: command not found")
+        self.assertEqual((first["tool"], first["kind"]), (1, 1))
+        self.assertEqual(list(first), ["pv", "os", "py", "pyv", "pathf", "tool", "kind"])
+        self.assertTrue(all(type(v) is int for v in tm.ok(first).values()))
+        self.assertNotIn("python", json.dumps(tm.ok(first)))
+        self.assertIsNone(self.fail("Bash", "Exit code 127\nbash: python3: command not found"))
+        self.assertIsNotNone(self.fail("Bash", "Exit code 127\nbash: python3: command not found", session="s2"))
+        self.assertIsNotNone(self.fail("Bash", "ENOSPC: no space left on device"))
+        self.assertIsNotNone(self.fail("Read", "ENOSPC: no space left on device"))
+
+    def test_a_plain_non_zero_exit_and_an_interruption_say_nothing(self):
+        self.assertIsNone(self.fail("Bash", "Exit code 1"))
+        self.assertIsNone(self.fail("Bash", "  Exit code 2  "))
+        self.assertIsNone(self.fail("Bash", "Exit code 127\nbash: python3: command not found", is_interrupt=True))
+        self.assertIsNotNone(self.fail("Bash", "Exit code 1\ngrep: unmatched ["))
+
+    def test_hostile_failure_text_never_crashes_and_never_leaves(self):
+        for text in ("x" * 2_000_000, "\x00\x01" * 5000, "\u202e" * 3000, None, 5, {"a": 1}, ["Traceback"] * 100):
+            got = self.fail("Bash", text, session="h%s" % id(text))
+            if got is not None:
+                self.assertTrue(all(type(v) is int for v in got.values()))
+        secret = self.fail("Bash", "ENOSPC while writing /home/alice/secret-project/passwords.txt", session="p")
+        self.assertNotIn("alice", json.dumps(tm.ok(secret)))
+
+    def test_a_model_call_that_ended_a_turn_is_one_code(self):
+        for text, want in (("rate_limit", 1), ("authentication_failed", 2), ("billing_error", 3), ("invalid_request", 4), ("server_error", 5), ("overloaded_error", 5),
+                           ("max_output_tokens", 6), ("request timeout", 7), ("", 99), ("something new", 99)):
+            got = tm.failure_metrics({"hook_event_name": "StopFailure", "error": text, "session_id": "m-" + text}, self.ws)
+            self.assertEqual(got["api"], want, text)
+            self.assertNotIn("tool", got)
+
+    def test_the_hook_prints_one_line_of_numbers_and_then_nothing(self):
+        payload = {"cwd": self.ws, "hook_event_name": "PostToolUseFailure", "tool_name": "Read", "error": "File does not exist.", "session_id": "z"}
+        line = json.loads(self.hook("failure", payload))["metrics"]
+        self.assertEqual((line["tool"], line["kind"]), (2, 9))
+        self.assertEqual(self.hook("failure", payload), "")
+
+
+class Runs(Base):
+    def test_the_last_extraction_is_counted_from_its_own_statistics(self):
+        put(self.ws, "analysis/sys/rules_result.json", {"stats": {"agents": 172, "failedModules": ["a", "b"], "droppedModules": ["c"], "skippedModules": ["d"], "unverified": 5}})
+        got = tm.ok(tm.run_metrics(self.ws))
+        self.assertEqual(dict(got), {"pv": tm.plugin_version(), "agents": 170, "wf_failed": 3, "wf_skip": 1, "wf_unver": 5})
+        self.assertTrue(self.hook("run", {"cwd": self.ws}))
+        self.assertEqual(self.hook("run", {"cwd": self.ws}), "")
+
+    def test_no_statistics_or_odd_ones_say_nothing_or_zeros(self):
+        self.assertIsNone(tm.run_metrics(self.ws))
+        put(self.ws, "analysis/sys/rules_result.json", {"stats": {"agents": "many", "failedModules": "x", "unverified": [1]}})
+        got = tm.ok(tm.run_metrics(self.ws))
+        self.assertEqual((got["agents"], got["wf_failed"], got["wf_skip"], got["wf_unver"]), (0, 0, 0, 0))
+
+
+class OwnErrors(Base):
+    def crash(self, error):
+        out = io.StringIO()
+        with mock.patch.object(tm, "state_metrics", side_effect=error), mock.patch.object(sys, "stdin", io.StringIO("{}")), contextlib.redirect_stdout(out):
+            self.assertEqual(tm.main(["telemetry.py", "state"]), 0)
+        return out.getvalue()
+
+    def test_the_plugins_own_errors_are_sent_as_a_kind_and_a_line_once(self):
+        first = self.crash(ValueError("secret text about /home/alice"))
+        line = json.loads(first)["metrics"]
+        self.assertEqual(line["err"], 2)
+        self.assertGreater(line["err_at"], 0)
+        self.assertNotIn("secret", first)
+        self.assertEqual(self.crash(ValueError("again")), "")
+        self.assertEqual(json.loads(self.crash(UnicodeDecodeError("utf-8", b"", 0, 1, "bad")))["metrics"]["err"], 8)
+        self.assertEqual(json.loads(self.crash(KeyError("k")))["metrics"]["err"], 1)
+        self.assertEqual(json.loads(self.crash(RuntimeError("odd")))["metrics"]["err"], 99)
+
+    def test_an_error_is_not_reported_when_counts_are_off(self):
+        with mock.patch.dict(os.environ, {"CODE_MODERNIZATION_TELEMETRY": "0"}):
+            self.assertEqual(self.crash(KeyError("k")), "")
+
+    def test_without_an_alarm_signal_a_timer_stands_in_and_is_cancelled(self):
+        class NoAlarm:
+            pass
+        with mock.patch.object(tm, "signal", NoAlarm()):
+            self.assertTrue(self.hook("state", {"cwd": self.ws}))
+        self.assertEqual([t for t in threading.enumerate() if isinstance(t, threading.Timer)], [])
+
+
 class Shell(unittest.TestCase):
     """scripts/telemetry.sh must start Python only when the plugin is in use."""
 
@@ -520,9 +658,78 @@ class Shell(unittest.TestCase):
         self.assertEqual(self.run_hook("command", {"prompt": "/commit"}), "")
         self.assertEqual(self.run_hook("state", {"cwd": elsewhere}, cwd=elsewhere), "")
         self.assertEqual(self.run_hook("nonsense", {}), "")
-        # no python at all: still quiet, still exit 0
+        # no python at all: quiet for a turn's end, and a typed command is reported in numbers by the shell itself
         self.assertEqual(self.run_hook("state", {"cwd": self.ws}, path=no_python), "")
-        self.assertEqual(self.run_hook("command", {"prompt": "/modernize"}, path=no_python), "")
+        said = json.loads(self.run_hook("command", {"prompt": "/modernize"}, path=no_python))["metrics"]
+        self.assertEqual((said["cmd"], said["py"], said["pyv"]), (1, 1, 0))
+
+    def toolbox(self, name, **fake):
+        """A PATH folder holding only the tools the wrapper uses plus fake ones: name=script text, or "python" for the real interpreter."""
+        d = os.path.join(self.tmp, name)
+        os.makedirs(d)
+        for tool in ("grep", "dirname", "sed", "head", "id", "mkdir", "cat", "uname"):
+            if tool not in fake and shutil.which(tool):
+                os.symlink(shutil.which(tool), os.path.join(d, tool))
+        for tool, body in fake.items():
+            path = os.path.join(d, tool)
+            if body == "python":
+                os.symlink(sys.executable, path)
+            else:
+                with open(path, "w") as fh:
+                    fh.write(body)
+                os.chmod(path, 0o755)
+        return d
+
+    def say(self, mode, payload, **kw):
+        out = self.run_hook(mode, payload, **kw)
+        return json.loads(out)["metrics"] if out else None
+
+    def test_windows_is_recognised_and_a_missing_python_is_reported_by_the_shell(self):
+        box = self.toolbox("win", uname="#!/bin/sh\necho MINGW64_NT-10.0-19045\n")
+        got = self.say("command", {"prompt": "/code-modernization:modernize-verify x"}, path=box)
+        self.assertEqual((got["os"], got["py"], got["cmd"], got["pyv"]), (3, 1, 11, 0))
+
+    def test_the_windows_store_placeholder_is_a_broken_python3_and_python_is_used_instead(self):
+        stub = "#!/bin/sh\necho 'Python was not found; run without arguments to install from the Microsoft Store.' >&2\nexit 49\n"
+        box = self.toolbox("store", python3=stub, uname="#!/bin/sh\necho MSYS_NT-10.0\n")
+        self.assertEqual(self.say("command", {"prompt": "/modernize"}, path=box)["py"], 3)       # nothing else to fall back to
+        box = self.toolbox("store2", python3=stub, python="python", uname="#!/bin/sh\necho MSYS_NT-10.0\n")
+        got = self.say("command", {"prompt": "/modernize"}, path=box)                             # python does the work, and says so
+        self.assertEqual((got["os"], got["py"], got["cmd"]), (3, 4, 1))
+        self.assertEqual(got["pyv"], sys.version_info[0] * 100 + sys.version_info[1])
+
+    def test_a_python_that_is_too_old_and_one_that_crashes_are_told_apart(self):
+        old = "#!/bin/sh\ncase \"$1\" in -c) echo 307 ;; *) exit 1 ;; esac\n"
+        crash = "#!/bin/sh\ncase \"$1\" in -c) echo 311 ;; *) exit 1 ;; esac\n"
+        self.assertEqual(self.say("command", {"prompt": "/modernize"}, path=self.toolbox("old", python3=old))["py"], 5)
+        self.assertEqual(self.say("command", {"prompt": "/modernize"}, path=self.toolbox("crash", python3=crash))["py"], 6)
+
+    def test_health_is_sent_once_per_version_even_when_python_is_missing(self):
+        box = self.toolbox("nopy")
+        first = self.say("health", {"cwd": self.ws}, path=box)
+        self.assertEqual((first["py"], sorted(first)), (1, ["os", "pathf", "pv", "py", "pyv"]))
+        self.assertIsNone(self.say("health", {"cwd": self.ws}, path=box))
+        self.assertTrue(any(n.startswith("health-sent-") for n in os.listdir(self.data)))
+
+    def test_health_from_python_is_sent_once_and_the_off_switch_stops_it(self):
+        self.assertEqual(self.say("health", {"cwd": self.ws}, env={"CODE_MODERNIZATION_TELEMETRY": "0"}), None)
+        self.assertFalse(any(n.startswith("health-sent-") for n in os.listdir(self.data)))
+        first = self.say("health", {"cwd": self.ws})
+        self.assertEqual(first["py"], 0)
+        self.assertIsNone(self.say("health", {"cwd": self.ws}))
+
+    def test_a_python_failure_is_reported_by_the_shell_when_python_cannot_run(self):
+        box = self.toolbox("nopy2")
+        put(self.ws, "analysis/sys/PREFLIGHT.md", "# x\n")
+        got = self.say("failure", {"tool_name": "Bash", "error": "Exit code 127\nbash: python3: command not found"}, path=box)
+        self.assertEqual((got["tool"], got["kind"], got["py"]), (1, 1, 1))
+        self.assertIsNone(self.say("failure", {"tool_name": "Read", "error": "File does not exist."}, path=box))
+
+    def test_a_folder_with_a_space_and_an_accent_is_flagged(self):
+        odd = os.path.join(self.tmp, "my caf\u00e9 work")
+        os.makedirs(odd)
+        got = self.say("command", {"prompt": "/modernize"}, cwd=odd)
+        self.assertEqual(got["pathf"], 3)
 
     def test_python_starts_only_where_the_plugin_has_left_its_files(self):
         marker = os.path.join(self.tmp, "started")
@@ -563,14 +770,17 @@ class Shipped(unittest.TestCase):
 
     def test_the_hooks_call_scripts_that_exist_and_are_asynchronous(self):
         hooks = json.loads(self.read("hooks", "hooks.json"))["hooks"]
-        self.assertEqual(sorted(hooks), ["Stop", "UserPromptSubmit"])
+        want = {"UserPromptSubmit": ["command"], "Stop": ["state", "run"], "SessionStart": ["health"], "PostToolUseFailure": ["failure"], "StopFailure": ["failure"]}
+        self.assertEqual(sorted(hooks), sorted(want))
         for event, groups in hooks.items():
+            modes = []
             for group in groups:
                 for h in group["hooks"]:
                     self.assertTrue(h["asyncRewake"])
                     script = re.search(r"\$\{CLAUDE_PLUGIN_ROOT\}/(scripts/\w+\.sh)", h["command"]).group(1)
                     self.assertTrue(os.path.isfile(os.path.join(PLUGIN, script)), script)
-                    self.assertTrue(h["command"].rstrip().endswith("command" if event == "UserPromptSubmit" else "state"))
+                    modes.append(h["command"].split()[-1])
+            self.assertEqual(modes, want[event], event)
 
     def test_the_manifest_has_a_version_and_the_option_that_turns_counts_off(self):
         manifest = json.loads(self.read(".claude-plugin", "plugin.json"))

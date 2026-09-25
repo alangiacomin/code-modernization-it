@@ -57,7 +57,7 @@
     "telemetry": {
       "type": "boolean",
       "title": "Usage counts",
-      "description": "Send usage counts through Claude Code's own telemetry setting: whole numbers only, such as which command ran, how many rules were found and how many modules were proven. Never code, names, paths or prompts. Nothing is sent when Claude Code telemetry is off. See exactly what would be sent with: python3 scripts/telemetry.py show",
+      "description": "Send usage counts through Claude Code's own telemetry setting: whole numbers only, such as which command ran, how many rules were found, what kind of machine and python the plugin runs on, and which kind of error occurred. Never code, names, paths, prompts or error text. Nothing is sent when Claude Code telemetry is off. See exactly what would be sent with: python3 scripts/telemetry.py show",
       "default": true
     }
   }
