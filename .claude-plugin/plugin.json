@@ -1,5 +1,6 @@
 {
   "name": "code-modernization",
+  "version": "1.0.0",
   "description": "Guided modernization for any legacy codebase: start with /modernize, get an assessment, an interactive map, the business rules mined from the code, and a plan you approve, then an upgrade, a rewrite or a rebuild with independent proof that the new code behaves like the old. Includes security hardening, a one-page report, specialist agents, and an optional live progress pane (early access).",
   "author": {
     "name": "Anthropic",
@@ -52,6 +53,12 @@
       "title": "Legacy directory",
       "description": "The read-only tree holding the legacy systems, relative to the workspace.",
       "default": "legacy"
+    },
+    "telemetry": {
+      "type": "boolean",
+      "title": "Usage counts",
+      "description": "Send usage counts through Claude Code's own telemetry setting: whole numbers only, such as which command ran, how many rules were found and how many modules were proven. Never code, names, paths or prompts. Nothing is sent when Claude Code telemetry is off. See exactly what would be sent with: python3 scripts/telemetry.py show",
+      "default": true
     }
   }
 }
