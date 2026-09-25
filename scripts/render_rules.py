@@ -36,8 +36,9 @@ def split_citation(value):
     if not m:
         return one_line(text, 200), ''
     primary = f'{m.group(1)}:{m.group(2)}' + (f'-{m.group(3)}' if m.group(3) else '')
-    rest = text[m.end():].strip(' \t;,.-\u2013\u2014`')
-    return one_line(primary, 200), one_line(rest, 300)
+    rest = re.sub(r'\s*;\s*also\s+', '; ', text[m.end():], flags=re.I)       # citations a consolidation appended
+    rest = re.sub(r'^[\s;,.\-\u2013\u2014`]*(?:also\s+)?', '', rest, flags=re.I)
+    return one_line(primary, 200), one_line(rest.strip(' \t;,.-\u2013\u2014`'), 300)
 
 
 def block(value):
@@ -143,6 +144,16 @@ def main(argv):
         doc += ['## ⚠ Instruction-shaped content found in source', '',
                 'These lines of the source tried to steer automated analysis. A person should look at them.', '']
         doc += [f'- {one_line(f, 300)}' for f in flags]
+        doc.append('')
+
+    folded = [f for f in (result.get('foldedRules') or []) if isinstance(f, dict)]
+    if folded:
+        doc += ['## Rules folded into another', '',
+                'These rules described the same behavior as another rule in a different place, so they were merged into it '
+                '(the kept rule lists their locations under "Also cited"):', '']
+        doc += [f"- {one_line(f.get('name'), 100)} ({one_line(f.get('source'), 100)}) into {one_line(f.get('into'), 100)}" for f in folded[:100]]
+        if len(folded) > 100:
+            doc.append(f'- … and {len(folded) - 100} more')
         doc.append('')
 
     gaps = [('never attempted (token budget or agent cap)', stats.get('skippedModules')),

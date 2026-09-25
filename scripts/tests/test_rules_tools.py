@@ -174,6 +174,19 @@ class RenderTests(unittest.TestCase):
             self.assertIn('**Also cited:** (aggregation); family table at lib/b.pm:31-40', text)
             self.assertEqual(text.count('**Also cited:**'), 2)
 
+    def test_folded_rules_are_listed_so_nothing_disappears_untraceably(self):
+        result = {'confirmedRules': [{'name': 'Twiddle table', 'category': 'Calculation', 'priority': 'P0', 'source': 'a.c:1-2 ; also b.c:3-4',
+                                      'plainEnglish': 'x', 'given': 'g', 'when': 'w', 'then': 't', 'confidence': 'Low'}],
+                  'foldedRules': [{'name': 'Twiddle factors', 'source': 'b.c:3-4', 'into': 'Twiddle table'}, 'junk', {'name': 'X\n# fake heading', 'source': 's', 'into': 'i'}]}
+        with tempfile.TemporaryDirectory() as ws:
+            write(ws, 'analysis/s/rules_result.json', json.dumps(result))
+            self.assertEqual(run('render_rules.py', 's', '--workspace', ws).returncode, 0)
+            text = open(os.path.join(ws, 'analysis/s/BUSINESS_RULES.md'), encoding='utf-8').read()
+            self.assertIn('## Rules folded into another', text)
+            self.assertIn('- Twiddle factors (b.c:3-4) into Twiddle table', text)
+            self.assertIn('**Also cited:** b.c:3-4', text)
+            self.assertNotIn('\n# fake heading', text)
+
     def test_unreadable_result_is_an_error(self):
         with tempfile.TemporaryDirectory() as ws:
             self.assertEqual(run('render_rules.py', 's', '--workspace', ws).returncode, 1)
