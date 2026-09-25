@@ -77,6 +77,9 @@ While iterating, run only this module's tests; run the whole suite once before S
    That script, not your judgment, decides same or different. Mask only fields that legitimately vary
    (timestamps, generated ids) and say what each mask hides. A difference you accept is recorded with a
    reason in the case's `approvedDifference`, and only a person accepts it.
+   Floating-point numbers that another compiler or math library prints slightly differently are not a
+   mask: give that case a `tolerance` (`rel` or `abs`, and a `why`), which compares numbers written with a
+   decimal point or exponent within it, every other byte exactly, and is listed in the result.
 
 ## Step 4 — Notes and a side-by-side
 

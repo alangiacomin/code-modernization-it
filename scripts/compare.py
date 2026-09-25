@@ -23,6 +23,16 @@ position of a difference and a variable-length match still compares equal. A cas
   differs   different; the first difference is recorded (a person may approve it: differs-approved)
   missing   a file is absent, unreadable or outside the cases folder. Never a pass.
 
+Numbers that a run legitimately prints a little differently (floating-point results from another
+compiler or math library) can be compared within a declared tolerance, per case or for all cases:
+
+    "tolerance": {"rel": 1e-9, "abs": 0, "why": "last-digit rounding of the exp() in the interest formula"}
+
+The reason is required and is recorded. Only numbers written with a decimal point or an exponent
+may differ, and only within the tolerance; every other byte, and every integer, must match exactly.
+The case is `same`, with the largest relative difference recorded; anything outside the tolerance
+is `differs`. A relative tolerance above 1% is refused: that is a different result, not rounding.
+
 Writes EQUIVALENCE.json (default: next to the cases file). Exit 0 only when at least one case
 executed, none is missing or differs (approved differences are allowed), the self-check did not
 fail and some compared output was not empty; 1 otherwise; 2 for unusable input.
@@ -32,6 +42,7 @@ import bisect
 import datetime
 import hashlib
 import json
+import math
 import os
 import re
 import sys
@@ -39,6 +50,8 @@ import tempfile
 
 MARK = b"\x00<MASK>\x00"
 MAX_BYTES = 256 * 1024 * 1024
+MAX_TOLERANT_BYTES = 32 * 1024 * 1024
+NUMBER = re.compile(rb"[-+]?(?:\d+\.\d*|\.\d+|\d+)(?:[eE][-+]?\d+)?")
 
 
 class InputError(Exception):
@@ -70,6 +83,74 @@ def parse_masks(specs, cid):
             except re.error as err:
                 raise InputError("case %s: bad regex %r: %s" % (cid, spec["regex"], err))
     return masks
+
+
+def parse_tolerance(spec, cid):
+    """{"rel": 1e-9, "abs": 0, "why": "..."} -> a validated dict, or None when there is none."""
+    if spec is None:
+        return None
+    if not isinstance(spec, dict):
+        raise InputError("case %s: 'tolerance' must be an object with rel, abs and why" % cid)
+    try:
+        rel, ab = float(spec.get("rel", 0)), float(spec.get("abs", 0))
+    except (TypeError, ValueError):
+        raise InputError("case %s: the tolerance's rel and abs must be numbers" % cid)
+    if not (math.isfinite(rel) and math.isfinite(ab)) or rel < 0 or ab < 0 or (rel == 0 and ab == 0):
+        raise InputError("case %s: give a positive rel or abs tolerance" % cid)
+    if rel > 0.01:
+        raise InputError("case %s: a relative tolerance above 1%% is a different result, not rounding" % cid)
+    why = clip(spec.get("why"), 300).strip()
+    if not why:
+        raise InputError("case %s: a tolerance needs a 'why' saying what legitimately differs" % cid)
+    return {"rel": rel, "abs": ab, "why": why}
+
+
+def split_numbers(data):
+    """-> [(is_number, bytes, offset)] covering `data` end to end."""
+    parts, pos = [], 0
+    for m in NUMBER.finditer(data):
+        if m.start() > pos:
+            parts.append((False, data[pos:m.start()], pos))
+        parts.append((True, m.group(), m.start()))
+        pos = m.end()
+    if pos < len(data):
+        parts.append((False, data[pos:], pos))
+    return parts
+
+
+def is_float(token):
+    return any(c in token for c in b".eE")
+
+
+def within_tolerance(a, b, tol):
+    """Compare two masked outputs number by number. -> (True, stats) or (False, offset of the first real difference)."""
+    if len(a) > MAX_TOLERANT_BYTES or len(b) > MAX_TOLERANT_BYTES:
+        return False, first_diff(a, b) or 0
+    ta, tb = split_numbers(a), split_numbers(b)
+    if len(ta) != len(tb):
+        return False, first_diff(a, b) or 0
+    differing, worst = 0, 0.0
+    for (na, xa, sa), (nb, xb, _) in zip(ta, tb):
+        if xa == xb:
+            continue
+        if na != nb:
+            return False, sa
+        if not na:
+            return False, sa + (first_diff(xa, xb) or 0)
+        if not (is_float(xa) and is_float(xb)):
+            return False, sa                      # an integer must match exactly
+        try:
+            x, y = float(xa), float(xb)
+        except ValueError:
+            return False, sa
+        if not (math.isfinite(x) and math.isfinite(y)):
+            return False, sa
+        scale = max(abs(x), abs(y))
+        if abs(x - y) > max(tol["abs"], tol["rel"] * scale):
+            return False, sa
+        differing += 1
+        worst = max(worst, abs(x - y) / scale if scale else 0.0)
+    return True, {"differing": differing, "maxRelativeDifference": worst}
 
 
 def mask_spans(data, masks):
@@ -170,10 +251,11 @@ def rel_to(path, folder):
         return path
 
 
-def judge(case, index, base, out_dir, allow_outside):
+def judge(case, index, base, out_dir, allow_outside, default_tolerance=None):
     """-> (case record, legacy bytes or None, masks)."""
     cid = clip(str(case.get("id") or "C%02d" % (index + 1)), 80)
     masks = parse_masks(case.get("mask"), cid)
+    tol = parse_tolerance(case["tolerance"] if "tolerance" in case else default_tolerance, cid)
     rec = {"id": cid, "title": clip(case.get("title"), 300), "verdict": "missing", "reason": "",
            "legacyPath": "", "newPath": "", "legacySha256": "", "newSha256": "",
            "masked": [m[2] for m in masks], "approvedDifference": clip(case.get("approvedDifference"), 500),
@@ -187,7 +269,7 @@ def judge(case, index, base, out_dir, allow_outside):
             problems.append("The %s output was not compared: %s (%s)." % (side, why, clip(str(given), 200)))
     if problems:
         rec["reason"] = " ".join(problems)
-        return rec, None, masks
+        return rec, None, masks, tol
     legacy, new = data["legacy"], data["new"]
     rec["legacySha256"], rec["newSha256"] = hashlib.sha256(legacy).hexdigest(), hashlib.sha256(new).hexdigest()
     a, cuts, hid_a = apply_masks(legacy, masks)
@@ -200,7 +282,7 @@ def judge(case, index, base, out_dir, allow_outside):
         rec["reason"] = ("Both outputs are empty, so nothing was compared." if rec["empty"] else
                          "Identical after masking: %d of %d bytes were hidden by %d mask(s)." % (hid_a, len(legacy), len(masks)) if masks else
                          "Identical, %d bytes." % len(legacy))
-        return rec, legacy, masks
+        return rec, legacy, masks, tol
     seen, seen_at = context(a, at)
     got, _ = context(b, at)
     line = a.count(b"\n", 0, at) + 1
@@ -211,22 +293,39 @@ def judge(case, index, base, out_dir, allow_outside):
             "legacy" if at >= len(a) else "new", where, "new" if at >= len(a) else "legacy")
     else:
         rec["reason"] = "The outputs first differ at %s." % where
+    if tol:
+        rec["tolerance"] = dict(tol)
+        ok, info = within_tolerance(a, b, tol)
+        if ok:
+            rec["verdict"] = "same"
+            rec["withinTolerance"] = info
+            rec["reason"] = ("Identical apart from %d number(s) that differ within the declared tolerance "
+                             "(relative %g, absolute %g; largest relative difference %.3g). Declared reason: %s"
+                             % (info["differing"], tol["rel"], tol["abs"], info["maxRelativeDifference"], clip(tol["why"], 200)))
+            return rec, legacy, masks, tol
+        line = a.count(b"\n", 0, info) + 1
+        rec["reason"] = "A number or text differs beyond the declared tolerance at line %d, byte %d." % (line, original_offset(cuts, info))
     if rec["approvedDifference"].strip():
         rec["verdict"] = "differs-approved"
         rec["reason"] += " A person approved this difference: %s" % clip(rec["approvedDifference"], 200)
     else:
         rec["verdict"] = "differs"
-    return rec, legacy, masks
+    return rec, legacy, masks, tol
+
+
+def differs_under(changed, data, masks, tol):
+    """Would the comparator report `changed` as different from `data`?"""
+    a, b = apply_masks(data, masks)[0], apply_masks(changed, masks)[0]
+    return a != b and not (tol and within_tolerance(a, b, tol)[0])
 
 
 def self_check(items):
     """Prove the comparator can fail: change one unmasked byte of each legacy output; it must differ."""
     tested = 0
-    for cid, data, masks in items:
+    for cid, data, masks, tol in items:
         if not data:
             continue
         tested += 1
-        base, _, _ = apply_masks(data, masks)
         free, pos = [], 0
         for s, e in mask_spans(data, masks) + [(len(data), len(data))]:
             if s > pos:
@@ -235,15 +334,30 @@ def self_check(items):
         if not free:
             return False, "case %s: the masks hide every byte, so no difference could ever be seen" % cid
         biggest = max(free, key=lambda f: f[1] - f[0])
-        for p in (free[0][0], free[-1][1] - 1, (biggest[0] + biggest[1]) // 2):
-            changed = data[:p] + bytes([data[p] ^ 1]) + data[p + 1:]
-            if apply_masks(changed, masks)[0] != base:
-                break
-        else:
-            return False, "case %s: a one-byte change to the legacy output was not reported as different" % cid
+        flip = lambda p: data[:p] + bytes([data[p] ^ 1]) + data[p + 1:]
+        spots = [free[0][0], free[-1][1] - 1, (biggest[0] + biggest[1]) // 2]
+        caught = any(differs_under(flip(p), data, masks, tol) for p in spots)
+        if tol and caught:
+            # A tolerance must never hide a change to the numbers it covers: flipping the leading digit of a tolerated
+            # float (one that is not masked) has to be reported, or the tolerance is too loose to prove anything.
+            floats = [m.start() for m in list(NUMBER.finditer(data[:1 << 20]))[:200]
+                      if is_float(m.group()) and any(a <= m.start() < b for a, b in free)]
+            caught = not floats or any(differs_under(flip(p), data, masks, tol) for p in floats)
+        if not caught:
+            return False, "case %s: a one-byte change to the legacy output was not reported as different%s" % (
+                cid, " (the tolerance may be too loose)" if tol else "")
     if not tested:
         return None, "not applicable: no executed case had bytes to test"
     return True, "each legacy output was compared with a copy changed by one byte and reported as different"
+
+
+def totals(records, executed, count):
+    t = {"cases": len(records), "executed": executed, "same": count("same"), "differs": count("differs"),
+         "differsApproved": count("differs-approved"), "missing": count("missing")}
+    tolerant = sum(1 for r in records if r.get("withinTolerance"))
+    if tolerant:  # additive: absent unless a declared tolerance was used
+        t["sameWithinTolerance"] = tolerant
+    return t
 
 
 def run(cases_path, out_path=None, allow_outside=False):
@@ -261,21 +375,19 @@ def run(cases_path, out_path=None, allow_outside=False):
     for i, case in enumerate(spec["cases"]):
         if not isinstance(case, dict):
             raise InputError("case %d is not an object" % (i + 1))
-        rec, data, masks = judge(case, i, base, out_dir, allow_outside)
+        rec, data, masks, tol = judge(case, i, base, out_dir, allow_outside, spec.get("tolerance"))
         if rec["id"] in ids:
             raise InputError("duplicate case id %r" % rec["id"])
         ids.add(rec["id"])
         records.append(rec)
         if data is not None:
-            items.append((rec["id"], data, masks))
+            items.append((rec["id"], data, masks, tol))
     passed, detail = self_check(items)
     count = lambda v: sum(1 for r in records if r["verdict"] == v)
     ends = lambda key: {k: clip(spec.get(key, {}).get(k), 300) for k in ("label", "command")} if isinstance(spec.get(key), dict) else {"label": "", "command": ""}
     return {"system": clip(spec.get("system"), 200), "generated": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "legacy": ends("legacy"), "new": ends("new"), "selfCheck": {"passed": passed, "detail": detail},
-            "totals": {"cases": len(records), "executed": len(items), "same": count("same"), "differs": count("differs"),
-                       "differsApproved": count("differs-approved"), "missing": count("missing")},
-            "cases": records}
+            "totals": totals(records, len(items), count), "cases": records}
 
 
 def verdict_of(result):
@@ -336,12 +448,13 @@ def main(argv=None):
     if not args.quiet:
         t, plain = result["totals"], lambda s: re.sub(r"[\x00-\x1f\x7f-\x9f]", "?", s)
         print("equivalence cases executed: %d" % t["executed"])
-        print("same %d | differs %d | differs but approved %d | missing %d | of %d cases" %
-              (t["same"], t["differs"], t["differsApproved"], t["missing"], t["cases"]))
+        print("same %d%s | differs %d | differs but approved %d | missing %d | of %d cases" %
+              (t["same"], " (%d within a declared tolerance)" % t["sameWithinTolerance"] if t.get("sameWithinTolerance") else "",
+               t["differs"], t["differsApproved"], t["missing"], t["cases"]))
         sc = result["selfCheck"]
         print("self-check: %s - %s" % ({True: "passed", False: "FAILED", None: "not applicable"}[sc["passed"]], plain(sc["detail"])))
         for r in result["cases"]:
-            if r["verdict"] != "same":
+            if r["verdict"] != "same" or r.get("withinTolerance"):
                 print("  %s  %s: %s" % (plain(r["id"]), r["verdict"], plain(r["reason"])[:200]))
         print(("NOT PROVEN: %s" % problem) if problem else "PROVEN: %d case(s) executed, none differ" % t["executed"])
         print("wrote %s" % out)
