@@ -9,9 +9,11 @@ document a steering committee approves and engineering executes. Target stack:
 `$target_stack` (if blank, the one in `analysis/$system/INTENT.md`, else recommend one from the assessment).
 
 Read `ASSESSMENT.md`, `topology.json` (and the `.mmd` files beside it; never read
-`TOPOLOGY.html`, it is a viewer with the data minified inside) and `BUSINESS_RULES.md`
-in `analysis/$system/` first. If any is missing, say so and stop: they come from `assess`,
-`map` and `extract-rules`, which run first. Four more inputs are conditional:
+`TOPOLOGY.html`, it is a viewer with the data minified inside) in `analysis/$system/` first,
+and `BUSINESS_RULES.md` too unless this is a same-technology **uplift** (the intent or the assessment
+says so): an uplift keeps the code, so its Behavior Contract is the recorded baseline and `extract-rules`
+can wait. If a required file is missing, say so and stop: they come from `assess`, `map` and
+`extract-rules`, which run first. Four more inputs are conditional:
 
 - **`RULE_REVIEWS.json` / `RULE_REVIEWS.md`**, if they exist (written by `/code-modernization:modernize-review`):
   a person's verdicts on individual rules. Never put a rule marked `wrong` or `discuss` in the Behavior
@@ -105,7 +107,9 @@ entry points and mark them as needing SME confirmation.
 
 **5. Behavior Contract.** The **P0 rules** from `BUSINESS_RULES.md` (the ones the system's core purpose
 depends on, or that are costly if wrong) that MUST be proven equivalent before any phase ships: they become the regression suite.
-Flag any P0 rule below High confidence as a blocker needing SME confirmation before its phase starts.
+Flag any P0 rule below High confidence as a blocker needing SME confirmation before its phase starts. For an uplift
+with no rules file, the contract is the baseline: `analysis/$system/BASELINE.md` and the result files it points to,
+which the new version must reproduce.
 
 **6. Validation Strategy.** Which combination applies, per phase: characterization tests, contract
 tests, dual-execution diff, property-based tests, manual UAT.

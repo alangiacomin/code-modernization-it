@@ -23,7 +23,10 @@ recorded outputs on the target only. That is fine, but label it honestly (Step 0
 ## Step 0 — Toolchain and version pinning (fail fast)
 
 1. **Pin the version pair exactly.** If the versions were not given, take them from `analysis/$system/INTENT.md` or the
-   brief. If either version is missing or vague (".NET" with no number), stop and ask.
+   brief. If either version is missing or vague (".NET" with no number), stop and ask. When the move spans several
+   major versions or two things at once (a JDK and a framework: Java 8 with Spring 4 to Java 21 with Spring Boot 3),
+   split it into hops that each build and pass their tests before the next starts (for example Java 8, 11, 17, 21),
+   name the order in the plan, and treat each hop as its own pilot.
 2. **Target runtime, required.** Verify it builds and tests (`dotnet --version` and a `dotnet test`
    smoke; `mvn` or `gradle`; `python3 -V` and `pytest`).
 3. **Source runtime, the baseline oracle.** Verify the *old* version also runs here. If it does not
@@ -44,6 +47,9 @@ recorded outputs on the target only. That is fine, but label it honestly (Step 0
    emits a patch: the most reliable). Python: `pyupgrade` (`2to3` is removed in 3.13, `python-modernize`
    is abandoned). JS and Angular: `ng update` (edits in place, needs a clean git tree and
    `node_modules`).
+6. **Where the tests point.** Before running any suite, read its configuration for the databases, queues and services it
+   connects to. If any is not a local or throwaway instance, stop and ask which environment to use: the baseline and
+   the proof both run the old code against it.
 
 `/code-modernization:modernize-preflight $system $target_version` gives the full readiness report.
 
@@ -57,9 +63,11 @@ approved") is the next step: meet it, never re-plan around it. If no phase match
 
 **Working copy first.** An uplift edits a whole solution *in place* (target frameworks, API fixes,
 the `.sln` and relative project references intact, a reviewable `git diff`). So copy it once, whole:
-`rsync -a legacy/$system/ modernized/$system-uplifted/` (the recommended deny rule refuses a `cp` out of the
-source directory), and do all editing there, git-tracked (`git init` and a first commit if the copy is not
-already a repository). `legacy/$system` stays the untouched baseline.
+`rsync -a --exclude .git legacy/$system/ modernized/$system-uplifted/` (the recommended deny rule refuses a `cp` out of the
+source directory), and do all editing there, git-tracked in its own new local history (`git init` and a first
+commit in the copy only, never in the source repository). `legacy/$system` stays the untouched baseline. Do not
+commit files that look like credentials or production configuration (keystores, `*.pem`, `.env*`, `*prod*`
+settings): leave them out of the first commit, list them in `UPLIFT_NOTES.md` and let a person decide.
 Copying the whole solution keeps the relative references intact and makes the result a real diff
 against the seeded copy. For a very large git-tracked source, the plan may propose
 `git worktree add --detach modernized/$system-uplifted` in the source repository instead of a copy
@@ -131,10 +139,14 @@ Either way rank by blast radius and mark each delta **Mechanical** (a codemod ca
    trivial real type and assert on it under both targets; if that will not go green on both, fix the
    harness now, not mid-migration. If the source leg cannot run here (Step 0.3), prove the target leg and
    mark it target-only.
-2. **Baseline is the oracle, and it goes in a file.** Run the existing suite on **`legacy/$system`** (the $source_version code) and
+2. **Baseline is the oracle, and it goes in a file.** Run the existing suite on **a scratch copy of `legacy/$system`** (the $source_version code; a build writes output, and nothing is ever built inside the source) and
    write the per-test table to **`analysis/$system/BASELINE.md`**, including the tests legacy fails: you
-   are proving *no behavior changed*, not *all tests pass*. If the source runtime cannot run here, write
-   the single line `target-only: <why>` instead. Step 5 does not start until the file exists.
+   are proving *no behavior changed*, not *all tests pass*. **Measure it, do not type it:** keep the runner's
+   own result files or raw log of that run (Maven `target/surefire-reports`, `pytest --junitxml`, a `dotnet test`
+   log) under `analysis/$system/baseline/` and name them in a `Recorded:` line of `BASELINE.md`; the proof step
+   counts a baseline it can read from those files, and a typed table alone caps the verdict at PARTLY PROVEN.
+   If the source runtime cannot run here, write the single line `target-only: <why>` instead. Step 5 does not
+   start until the file exists.
 3. **Gap-fill at delta sites.** With the catalog, spawn `test-engineer` to add characterization tests where
    **behavioral-silent** deltas touch under-tested code (culture, encoding, serialization, dates), not
    blanket coverage. No credential becomes a fixture. Target-only: pin them to recorded outputs.
