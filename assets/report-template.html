@@ -60,6 +60,9 @@ figure{margin:16px 0}figcaption{font:.8125rem ui-monospace,Menlo,Consolas,monosp
 details{margin:6px 0}summary{cursor:pointer;color:var(--link)}.diff{background:var(--bad-bg);color:var(--bad);font-weight:700}.hash{font:.75rem ui-monospace,Menlo,Consolas,monospace;overflow-wrap:anywhere}
 @media (max-width:860px){.layout{display:block}#nav{position:static;margin-bottom:12px}#navlist{display:none}#navsel{display:block}#found{margin:6px 0 0}.sec{padding:14px}.tools{justify-content:stretch}input{max-width:none}}
 @media print{:root{color-scheme:light;--bg:#fff;--surface:#fff;--text:#000;--muted:#333;--line:#999;--link:#000;--code:#f0f0f0}.top,#nav,.tools,.tool{display:none}.sec[hidden]{display:block!important}.sec,.glance{border:0;padding:0;break-inside:auto}.card,figure,tr{break-inside:avoid}body{font-size:11pt}.layout{display:block}}
+.next{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;margin:0 0 12px}.next .chip{font-size:.875rem;user-select:all}.next .why{color:var(--muted);font-size:.875rem}.copy{font:inherit;font-size:.8125rem;border:1px solid var(--line);background:var(--surface);color:var(--text);border-radius:6px;padding:2px 10px;cursor:pointer}.copy:hover{border-color:var(--link)}@media print{.copy{display:none}}
+/* keep short words and pills whole in table cells (long paths still break inside code) */
+td,th{overflow-wrap:break-word}td code,td .hash{overflow-wrap:anywhere}.badge,.chip{white-space:nowrap}
 </style>
 </head>
 <body>
@@ -263,6 +266,11 @@ function renderGlance() {
   if (eq) {
     kids.push(h('div', {class: 'banner ' + (eq.state === 'green' ? 'ok' : 'bad'), role: 'status'}, [(eq.state === 'green' ? '✓ ' : '✗ ') + eq.headline].concat(
       (eq.problems || []).slice(0, 3).map(function (p) { return h('p', null, [p]); }), [h('p', null, [h('a', {href: '#sec-equivalence'}, ['See the case table'])])])));
+  }
+  if (g.next && g.next.command) {
+    var copy = h('button', {type: 'button', class: 'copy', 'aria-label': 'Copy the command'}, ['Copy']);
+    copy.addEventListener('click', function () { try { navigator.clipboard.writeText(g.next.command).then(function () { copy.textContent = 'Copied'; }, function () { copy.textContent = 'Select and copy'; }); } catch (e) { copy.textContent = 'Select and copy'; } });
+    kids.push(h('p', {class: 'next'}, [h('strong', null, ['Next step']), h('code', {class: 'chip mono'}, [g.next.command]), copy, h('span', {class: 'why'}, [g.next.why || ''])]));
   }
   kids.push(h('ul', {class: 'chips', 'aria-label': 'Workflow steps'}, (g.steps || []).map(function (st) { return chip(st.label + (st.done ? ': done' : ': not yet'), st.done ? 'ok' : ''); })));
   if (g.track) s.push(stat('Track it looks like', g.track.label, g.track.why));

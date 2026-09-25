@@ -480,6 +480,36 @@ def load_mermaid(src):
         return ""
 
 
+def next_step(system, done, glance):
+    """The one command to run next, from which artifacts exist. The status command decides it the same way and also
+    reads the brief's phases; this page only knows what is on disk."""
+    def go(command, why):
+        return {"command": "/code-modernization:%s %s" % (command, system), "why": why}
+    if not done["preflight"]:
+        return go("modernize-preflight", "checks the environment and records where the code lives")
+    if not done["assess"]:
+        return go("modernize-assess", "says what you are dealing with and recommends a pattern")
+    if not done["map"]:
+        return go("modernize-map", "draws the structure of the system")
+    if not done["rules"]:
+        return go("modernize-extract-rules", "mines the business rules, each with a citation")
+    rules = glance.get("rules") or {}
+    if not done["brief"] and rules.get("defects") and not rules.get("reviews"):
+        return go("modernize-review", "a person confirms or corrects the rules that look wrong")
+    if not done["brief"]:
+        return go("modernize-brief", "writes the plan a person approves")
+    if not done["build"]:
+        return go("modernize-status", "names the first build command from the approved plan")
+    proof = glance.get("proof")
+    if not proof:
+        return go("modernize-verify", "re-checks what was built and gives each module a verdict")
+    if proof.get("verdict") != "PROVEN":
+        return go("modernize-verify", "the last check was %s: fix what its reasons name, then run it again" % str(proof.get("verdict"))[:20])
+    if not done["harden"]:
+        return go("modernize-harden", "scans the legacy system for security problems")
+    return go("modernize-status", "says whether modules or phases are left")
+
+
 def build(system, workspace, out=None):
     """-> (html, section count, output path), or None when nothing was found."""
     src = Source(workspace, system)
@@ -559,6 +589,7 @@ def build(system, workspace, out=None):
     done = {"preflight": "PREFLIGHT.md" in docs, "assess": "ASSESSMENT.md" in docs, "rules": "BUSINESS_RULES.md" in docs, "brief": "MODERNIZATION_BRIEF.md" in docs,
             "map": topo is not None or has_map or any(f["name"] != "ARCHITECTURE.mmd" for f in figures), "build": any(nonempty_dir(p) for p in mods), "harden": "SECURITY_FINDINGS.md" in docs}
     glance["steps"] = [{"key": k, "label": label, "done": bool(done[k])} for k, label in STEPS]
+    glance["next"] = next_step(system, done, glance)
     tracks = {"rewrite": [mods[0]], "same-stack uplift": [a("DELTA_CATALOG.md"), a("PLAYBOOK.md"), mods[1]], "reimagine": [a("AI_NATIVE_SPEC.md"), a("REIMAGINED_ARCHITECTURE.md"), mods[2]]}
     ranked = sorted(((newest(p), k) for k, p in tracks.items() if newest(p)), reverse=True)
     glance["track"] = {"label": ranked[0][1], "why": "newest artifact: " + os.path.relpath(ranked[0][0][1], workspace).replace(os.sep, "/")} if ranked else None
