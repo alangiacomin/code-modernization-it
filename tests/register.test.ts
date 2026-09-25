@@ -162,6 +162,8 @@ describe('start and pane', () => {
     expect(textOf(tree), 'no by-hand tag on a step the pane does itself').not.toContain('(by hand)')
     expect(labels).toContain('sign the brief')
     expect(labels, 'nothing to paste into the prompt').not.toContain('put in prompt')
+    expect(labels, 'the pane reads the disk by itself (after a write, at the end of a turn, and while idle): no manual refresh').not.toContain('refresh')
+    expect(labels).toEqual(['hide', 'sign the brief', 'review rules'])
 
     await $.ui.press({ plugin: NAME, key: 'sign' })
     expect(world.opened.at(-1)).toEqual({ id: 'modernize-sign', focus: true })
@@ -503,6 +505,27 @@ describe('review deck', () => {
     expect(page).toContain('| R-99 | Wrong |')
   })
 
+  test('a P0 rule sent to discussion, or marked wrong, is said in the pane: the build commands wait on it', async ($, on) => {
+    const file = (reviews: Record<string, unknown>) => JSON.stringify({ system: 'billing', version: 1, reviews })
+    const world = worldOf(on, { ...FULL, 'analysis/billing/RULE_REVIEWS.json': file({ 'P0-001': { verdict: 'discuss', at: '2026-09-16', note: 'ask Finance' } }) })
+
+    mock.clock(on)
+    await $.session.start(SESSION)
+
+    const first = textOf(await $.ui.render(PANE))
+
+    expect(first).toContain('1 high-priority rule under discussion: the build waits')
+    expect(first).not.toContain('marked wrong')
+
+    world.put('analysis/billing/RULE_REVIEWS.json', file({ 'P0-001': { verdict: 'discuss', at: '2026-09-16' }, 'P0-002': { verdict: 'wrong', at: '2026-09-16' } }))
+    await $.command.run(command('modernize-panel', 'json'))
+
+    const second = textOf(await $.ui.render(PANE))
+
+    expect(second).toContain('1 high-priority rule under discussion')
+    expect(second).toContain('1 rule marked wrong by a reviewer: no test is built on it')
+  })
+
   test('close hands the band back', async ($, on) => {
     worldOf(on, FULL)
     mock.clock(on)
@@ -574,7 +597,7 @@ describe('prompt context', () => {
     const first = await $.prompt.submit({ text: 'hello', wait: false, origin: { kind: 'composer' } })
     const second = await $.prompt.submit({ text: 'again', wait: false, origin: { kind: 'composer' } })
 
-    expect((first.context ?? []).join(' ')).toContain('billing: analysis 5/5 steps done · brief approved · 1 of 3 modules reviewed')
+    expect((first.context ?? []).join(' ')).toContain('billing: analysis 5/5 · brief approved · 1/3 modules reviewed')
     expect(second.context, 'unchanged: not attached again').toBe(undefined)
   })
 })

@@ -644,10 +644,6 @@ export function register(on: On, raw: PluginOptions) {
         })
         .catch(() => undefined)
     },
-    refresh: () => {
-      state.cache.clear()
-      void refresh(host)
-    },
     review: () => {
       void openDeck(host, 'flagged', '').catch(() => undefined)
     },

@@ -19,7 +19,6 @@ export type PaneActions = {
   /** Follow the workspace's next system, when it holds more than one. */
   system: () => void
   next: () => void
-  refresh: () => void
   review: () => void
   sign: () => void
   close: () => void
@@ -222,13 +221,14 @@ function phases(kit: Kit, snapshot: Snapshot, width: number, max: number): Rende
   )
 }
 
-/** Units of work in the order that helps most: problems first in an uplift, the newest first in a rewrite. */
+/** Units of work in the order that helps most: problems, then finished work first in an uplift; the newest first in a rewrite. */
 function orderOf(snapshot: Snapshot): Snapshot['modules'] {
   if (snapshot.track !== 'uplift') {
     return [...snapshot.modules].sort((a, b) => b.mtimeMs - a.mtimeMs)
   }
 
-  const rank = (state: string) => (state === 'tests-red' || state === 'tests-failing' ? 0 : state === 'scaffolded' ? 1 : state === 'tests-green' ? 2 : 3)
+  // Problems first, then what is finished, then what is tested, then what is only edited so far.
+  const rank = (state: string) => (state === 'tests-red' || state === 'tests-failing' ? 0 : state === 'reviewed' ? 1 : state === 'tests-green' ? 2 : state === 'scaffolded' ? 3 : 4)
 
   return [...snapshot.modules].sort((a, b) => rank(a.state) - rank(b.state) || (b.tests?.tests ?? 0) - (a.tests?.tests ?? 0))
 }
@@ -416,7 +416,6 @@ function buttonsOf(snapshot: Snapshot, state: State): string[] {
     ...(next?.action === 'sign' ? ['sign the brief'] : []),
     ...((snapshot.rules?.rules.length ?? 0) > 0 ? ['review rules'] : []),
     ...(state.activity.isWorking && state.fleet.seen > 0 ? ['stop the run'] : []),
-    'refresh',
   ]
 }
 
@@ -472,9 +471,11 @@ export function nextRowsOf(snapshot: Snapshot | null, state: State, width: numbe
 
   const next = snapshot.next
   const command = next === null ? 1 : Math.max(1, Math.ceil((next.text.length + (next.isByHand && next.action === undefined ? 12 : 0) + 2) / Math.max(10, width)))
-  const buttons = Math.max(1, Math.ceil(buttonsOf(snapshot, state).reduce((sum, label) => sum + label.length + 5, 0) / Math.max(10, width + 1)))
+  const labels = buttonsOf(snapshot, state)
+  // A blank row and the buttons, when there is any button to press.
+  const buttons = labels.length === 0 ? 0 : 1 + Math.max(1, Math.ceil(labels.reduce((sum, label) => sum + label.length + 5, 0) / Math.max(10, width + 1)))
 
-  return 1 + command + 1 + 1 + buttons
+  return 1 + command + 1 + buttons
 }
 
 function nextBlock(
@@ -488,6 +489,7 @@ function nextBlock(
   const { Box, Text, Button } = kit
   const next = snapshot.next
   const hasRules = (snapshot.rules?.rules.length ?? 0) > 0
+  const hasButtons = buttonsOf(snapshot, state).length > 0
 
   return (
     <Box flexDirection="column">
@@ -502,18 +504,19 @@ function nextBlock(
       ) : (
         <Text dimColor>{'  nothing to suggest'}</Text>
       )}
-      <Box marginTop={1} flexWrap="wrap" columnGap={1}>
-        {next !== null && !next.isByHand ? (
-          <Button key="next" onPress={actions.next}>put in prompt</Button>
-        ) : null}
-        {next?.action === 'sign' ? <Button key="sign" onPress={actions.sign}>sign the brief</Button> : null}
-        {hasRules ? <Button key="review" onPress={actions.review}>review rules</Button> : null}
-        {state.activity.isWorking && state.fleet.seen > 0 ? (
-          <Button key="stop" onPress={actions.stop}>stop the run</Button>
-        ) : null}
-        <Button key="refresh" dimColor onPress={actions.refresh}>refresh</Button>
-      </Box>
-      {hasHint ? <Text dimColor wrap="truncate-end">{clip('click a button, or ctrl+x tab then Tab, Enter', width)}</Text> : null}
+      {hasButtons ? (
+        <Box marginTop={1} flexWrap="wrap" columnGap={1}>
+          {next !== null && !next.isByHand ? (
+            <Button key="next" onPress={actions.next}>put in prompt</Button>
+          ) : null}
+          {next?.action === 'sign' ? <Button key="sign" onPress={actions.sign}>sign the brief</Button> : null}
+          {hasRules ? <Button key="review" onPress={actions.review}>review rules</Button> : null}
+          {state.activity.isWorking && state.fleet.seen > 0 ? (
+            <Button key="stop" onPress={actions.stop}>stop the run</Button>
+          ) : null}
+        </Box>
+      ) : null}
+      {hasHint && hasButtons ? <Text dimColor wrap="truncate-end">{clip('click a button, or ctrl+x tab then Tab, Enter', width)}</Text> : null}
     </Box>
   )
 }
@@ -673,7 +676,7 @@ export function showBar(
   return (
     // The band draws its own `[-]` collapse control at its right edge: leave it room.
     <Box justifyContent="space-between" paddingRight={5}>
-      <Text dimColor wrap="truncate-end">{clip(line, Math.max(8, width - 24))}</Text>
+      <Text dimColor wrap="truncate-end">{clip(line, Math.max(8, width - 20))}</Text>
       <Button key="show-pane" hotkey="m" onPress={onShow}>show pane</Button>
     </Box>
   )

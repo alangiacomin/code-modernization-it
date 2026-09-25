@@ -260,7 +260,7 @@ function verifyStepOf(prefix: string, system: string, module: Pick<ModernizedMod
   const text = `${prefix}verify ${system}${isToken(module.dir) ? ` ${module.dir}` : ''}`
 
   if (proof.state === 'none') {
-    return { text, isByHand: false, reason: `${name} is built, and nothing has checked yet that it behaves like the old code` }
+    return { text, isByHand: false, reason: `${name} is built but not yet checked against the old code` }
   }
 
   if (proof.state === 'changed') {
@@ -370,15 +370,15 @@ function nextOfUplift(prefix: string, system: string, stages: Stage[], proofs: R
   }
 
   if (!done('baseline')) {
-    return { text: command, isByHand: false, reason: 'next it records the baseline: what the tests do today, so the result can be compared' }
+    return { text: command, isByHand: false, reason: 'next it records what the tests do today, to compare against' }
   }
 
   if (!done('pilot')) {
-    return { text: command, isByHand: false, reason: 'next it migrates one module and writes down what it learned, before the rest' }
+    return { text: command, isByHand: false, reason: 'next it migrates one module first and writes down what it learned' }
   }
 
   if (!done('compare')) {
-    return { text: command, isByHand: false, reason: 'next it migrates the rest in batches and compares every result with the baseline' }
+    return { text: command, isByHand: false, reason: 'next it migrates the rest in batches, each compared with the baseline' }
   }
 
   // The whole upgraded copy is one thing to prove, under the name of its working copy.
@@ -846,9 +846,10 @@ export async function readSnapshot(
     }
   }
 
+  // A check that failed or could not be completed says why, in the check's own first reason. PARTLY PROVEN lets the work go on: a person decides.
   for (const [name, proof] of proofs) {
-    if (proof.state === 'not') {
-      attention.push(`${track === 'uplift' ? 'the upgrade' : (modules.find(module => module.dir.toLowerCase() === name)?.dir ?? name)}: NOT PROVEN${proof.reason === '' ? '' : `: ${proof.reason}`}`)
+    if (proof.state === 'not' || proof.state === 'partly') {
+      attention.push(`${track === 'uplift' ? 'the upgrade' : (modules.find(module => module.dir.toLowerCase() === name)?.dir ?? name)}: ${proof.verdict ?? ''}${proof.reason === '' ? '' : `: ${proof.reason}`}`)
     }
   }
 
@@ -893,8 +894,15 @@ export async function readSnapshot(
 
     const wrong = Object.values(reviews).filter(entry => entry.verdict === 'wrong').length
 
+    // A P0 rule a reviewer sent to discussion stops the build commands until it is settled.
+    const discussing = rules.value.rules.filter(rule => rule.priority === 'P0' && reviews[rule.id]?.verdict === 'discuss').length
+
+    if (discussing > 0) {
+      attention.push(`${discussing} high-priority rule${discussing === 1 ? '' : 's'} under discussion: the build waits`)
+    }
+
     if (wrong > 0) {
-      attention.push(`${wrong} rule${wrong === 1 ? '' : 's'} marked wrong by a reviewer`)
+      attention.push(`${wrong} rule${wrong === 1 ? '' : 's'} marked wrong by a reviewer: no test is built on ${wrong === 1 ? 'it' : 'them'}`)
     }
 
     if (pending > 0) {
@@ -948,8 +956,8 @@ export function oneLineOf(snapshot: Snapshot): string {
 
   const parts =
     snapshot.track === 'transform'
-      ? [`${snapshot.system}: analysis ${done}/5 steps done`]
-      : [`${snapshot.system}: ${TRACK_LABELS[snapshot.track]} ${done}/${countable.length} steps done`]
+      ? [`${snapshot.system}: analysis ${done}/5`]
+      : [`${snapshot.system}: ${TRACK_LABELS[snapshot.track]} ${done}/${countable.length}`]
 
   if (snapshot.brief !== null) {
     parts.push(snapshot.brief.approval.isSigned ? 'brief approved' : 'brief waiting for approval')
@@ -959,7 +967,7 @@ export function oneLineOf(snapshot: Snapshot): string {
     parts.push(
       snapshot.track === 'reimagine'
         ? `${snapshot.modules.length} service${snapshot.modules.length === 1 ? '' : 's'} built`
-        : `${snapshot.totals.done} of ${snapshot.totals.modules} modules ${snapshot.track === 'uplift' ? 'match the baseline' : 'reviewed'}`,
+        : `${snapshot.totals.done}/${snapshot.totals.modules} modules ${snapshot.track === 'uplift' ? 'match the baseline' : 'reviewed'}`,
     )
   }
 

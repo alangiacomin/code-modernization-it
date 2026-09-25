@@ -175,7 +175,7 @@ describe('what the pane makes of the proof', () => {
     const none = await withPack([])
 
     expect(none.next).toMatchObject({ text: `${PREFIX}verify billing INTCALC`, isByHand: false })
-    expect(none.next?.reason).toContain('nothing has checked yet')
+    expect(none.next?.reason).toBe('INTCALC is built but not yet checked against the old code')
 
     const changed = await withPack([entry('INTCALC', 'PROVEN')], { [NOTES]: CHECKED + HOUR })
 
@@ -193,12 +193,13 @@ describe('what the pane makes of the proof', () => {
     const partly = await withPack([entry('INTCALC', 'PARTLY PROVEN', ['Fresh inputs: only 3.'])])
 
     expect(partly.next?.text, 'Phase 1 is built and checked: on to the review of the plan').toBe(`${PREFIX}status billing`)
-    expect(partly.attention.some(line => line.includes('PROVEN'))).toBe(false)
+    expect(partly.attention, 'a person decides on what could not be completed: the reason is one line under Attention').toContain('INTCALC: PARTLY PROVEN: Fresh inputs: only 3.')
 
     const proven = await withPack([entry('INTCALC', 'PROVEN')])
 
     expect(proven.next?.text).toBe(`${PREFIX}status billing`)
     expect(proven.next?.reason).toContain('built and checked')
+    expect(proven.attention.some(line => line.includes('PROVEN')), 'nothing to say of a proven module').toBe(false)
   })
 
   test('modules are taken in the order the phase names them: one built and unchecked comes before the next one is started', async () => {

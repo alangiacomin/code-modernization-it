@@ -69,9 +69,9 @@ describe('uplift, whatever the stack', () => {
     // The uplift command takes the two versions from what the person said at the start, and asks when it has none: no placeholder.
     expect(snapshot.next?.isByHand).toBe(false)
     expect(snapshot.next?.text).toBe(`${PREFIX}uplift shop`)
-    expect(snapshot.next?.reason).toContain('compares every result with the baseline')
+    expect(snapshot.next?.reason).toContain('each compared with the baseline')
 
-    expect(oneLineOf(snapshot)).toContain('shop: uplift 5/7 steps done')
+    expect(oneLineOf(snapshot)).toContain('shop: uplift 5/7 · ')
     expect(snapshot.percent).not.toBe(null)
   })
 
@@ -391,6 +391,11 @@ describe('the pane in another stack', () => {
     expect(text).toContain('Java 100%')
     expect(text).toContain('matches baseline')
     expect(text).toContain('worse than baseline')
+    // Two rows of modules fit: problems first, then what is finished; what is only edited so far waits behind them.
+    expect(text).toContain('shop-web  worse than baseline')
+    expect(text).toContain('shop-core  matches baseline')
+    expect(text).not.toContain('shop-batch  changed')
+    expect(text).toContain('… 1 more')
     expect(text).toContain('/code-modernization:modernize-uplift shop')
     expect(text).not.toContain('<from>')
     expect(text).not.toContain('(by hand)')
