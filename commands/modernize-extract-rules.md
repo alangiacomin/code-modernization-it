@@ -146,5 +146,6 @@ confirmation** section listing each Medium and Low rule with its question.
 ## Finish
 
 Report: total rules, breakdown by category, how many need SME review, and (Method A) how many
-candidates the referees rejected: that number is the quality the verification bought. Refresh the
+candidates the referees rejected: that number is the quality the verification bought, and how many rules were
+folded together because they described the same behavior in more than one file (`stats.consolidated`). Refresh the
 report: `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/build_report.py" $system` (a convenience: if it fails or `python3` is missing, say so in one line and carry on). The next step is `/code-modernization:modernize-review $system` when rules are flagged for a person (P0 rules with a suspected defect, an SME question or less than High confidence: give the count), then `/code-modernization:modernize-brief $system <target-stack>`; with none flagged, go straight to the brief.
