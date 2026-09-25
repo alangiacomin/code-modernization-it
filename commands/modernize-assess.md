@@ -36,18 +36,19 @@ relaunch with `resumeFromRunId` and finished systems return from cache. Without
 the Workflow tool, gather the same row per system yourself.
 
 Per system: SLOC and dominant language (`cloc --csv`, else `scc`, else `find` +
-`wc -l`), file count, mean and max cyclomatic complexity (`lizard`, else count
-decision keywords), dependency freshness (age or pinned-version count of the
-manifest), documentation coverage (source files with a header comment, and
-architecture docs present), and the COCOMO index `2.94 × KSLOC^1.10`. **The
+`wc -l`), file count, complexity measured one way for every system (`scc`'s per-file
+complexity summed, divided by KSLOC, and the most complex single file; without `scc`,
+count decision keywords the same way everywhere), dependency freshness (age or pinned-version count of the
+manifest), documentation coverage (source files whose opening comment
+describes the file, not just a license, and architecture docs present), and the COCOMO index `2.94 × KSLOC^1.10`. **The
 index is a relative size measure for ranking systems, never a timeline or a cost**
 (it assumes human-team productivity): label the column "index", never print
 person-months, a date or a duration.
 
 Write `analysis/portfolio.html` (dark `#1e1e1e` background, `#d4d4d4` text,
 `#cc785c` accent, system-ui, CSS inline): one row per system, columns **System ·
-Lang · KSLOC · Files · Mean CCN · Max CCN · Dep Freshness · Doc Coverage % ·
-Complexity index · Risk**, index and Risk cells graded green to red, and a
+Lang · KSLOC · Files · Complexity per KSLOC · Most complex file · Dep Freshness · Doc
+Coverage % · Complexity index · Risk**, index and Risk cells graded green to red, and a
 2–3 sentence recommendation of which system goes first and why. Tell the user to
 open it, then stop.
 
