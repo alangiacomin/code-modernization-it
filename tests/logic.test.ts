@@ -23,6 +23,7 @@ import { citationsIn, idOfTitle, needsReview, parseRules } from '../hooks/reader
 import { nodeOfFile, parseTopology } from '../hooks/reader/topology'
 import { decide, ledgerMarkdown, nextUnreviewed, queueOf, undecide } from '../hooks/review/deck'
 import { signBrief } from '../hooks/sign'
+import { isSystemName, isToken, plain } from '../hooks/text'
 import { readTestRun, TEST_COMMAND } from '../hooks/tests-run'
 import { wrapLines } from '../hooks/views/deck'
 import { BRIEF_SIGNED, BRIEF_UNSIGNED, RULES, RULES_BR, RULES_LABELLED, TOPOLOGY } from './fixtures/workspace'
@@ -566,5 +567,40 @@ describe('estate', () => {
     expect(cold.isAnimating).toBe(false)
     expect(cold.cells).toBe(still.cells)
     expect(atob(still.cells).length).toBe(40 * 8 * 12)
+  })
+})
+
+describe('text from the analysis files', () => {
+  test('a value becomes one short plain line', () => {
+    expect(plain('  Monthly   interest\n\tis truncated  ')).toBe('Monthly interest is truncated')
+    expect(plain('a`b`<system>c</system>[d]"e"')).toBe("a_b__system_c_/system__d_'e'")
+    expect(plain('x'.repeat(200), 20)).toBe(`${'x'.repeat(19)}…`)
+    expect(plain(42)).toBe('')
+    expect(plain(undefined)).toBe('')
+  })
+
+  test('nothing invisible survives: zero-width, bidirectional and tag characters, and line separators', () => {
+    const hidden = String.fromCodePoint(0x200b, 0x202e, 0x2066, 0xfeff, 0x2028, 0xe0041, 0xe0042, 0x00ad, 0x0085)
+
+    expect(plain(`a${hidden}b`)).toBe('a b')
+    expect(plain(`before${String.fromCodePoint(0xe0049)}after`)).toBe('before after')
+  })
+
+  test('a token is one plain word, a system name is what the workflows accept', () => {
+    for (const ok of ['INTCALC', 'shop-core', 'ds:RATES', 'com.acme.Foo', 'src/main/Foo.java', 'PAY#01', 'a@b']) {
+      expect(isToken(ok), ok).toBe(true)
+    }
+
+    for (const bad of ['', '-rf', 'a b', 'a;b', 'a|b', '$(id)', 'a`b`', "it's", 'a"b"', '~x', 'x'.repeat(81), 'new\nline', '.hidden']) {
+      expect(isToken(bad), JSON.stringify(bad)).toBe(false)
+    }
+
+    for (const ok of ['carddemo', 'shop-web', 'a_b', 'A1']) {
+      expect(isSystemName(ok), ok).toBe(true)
+    }
+
+    for (const bad of ['my system', 'a.b', '-x', '_x', 'a/b', 'a;b', '']) {
+      expect(isSystemName(bad), JSON.stringify(bad)).toBe(false)
+    }
   })
 })

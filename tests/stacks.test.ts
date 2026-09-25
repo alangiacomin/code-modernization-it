@@ -4,7 +4,7 @@ import { tilesOf } from '../hooks/map/estate'
 import { discoverEstate } from '../hooks/reader/discover'
 import { xrayOf } from '../hooks/xray/xray'
 import { readNotes, stateOfUplift, totalsOfTrx } from '../hooks/reader/modernized'
-import { oneLineOf, readSnapshot, type ReadOptions, type Snapshot } from '../hooks/reader/progress'
+import { oneLineOf, readSnapshot, systemsOf, type ReadOptions, type Snapshot } from '../hooks/reader/progress'
 import { changedPathsOf, parseBaseline, parseCatalog } from '../hooks/reader/uplift'
 import { pickTrack } from '../hooks/reader/tracks'
 import { BAND, command, HINT, PANE, SESSION } from './fixtures/inputs'
@@ -159,6 +159,26 @@ describe('uplift, whatever the stack', () => {
 
     expect(changedPathsOf(before, after)).toEqual(['b', 'd', 'c'])
     expect(changedPathsOf(before, before)).toEqual([])
+  })
+
+  test('only systems the workflows would accept are listed, so a name from the tree never reaches a command or a note', async () => {
+    const fs = memoryFs({
+      'legacy/shop/a.java': 'x',
+      'legacy/my system/a.java': 'x',
+      'legacy/a;rm -rf/a.java': 'x',
+      'analysis/-flag/a.md': 'x',
+      'analysis/billing/a.md': 'x',
+      'legacy/.hidden/a.java': 'x',
+    })
+
+    expect(await systemsOf(fs)).toEqual(['billing', 'shop'])
+  })
+
+  test('a module id that is not one plain token is never put in a command', async () => {
+    const files = { ...MAVEN_UPLIFT }
+    const snapshot = await read(files)
+
+    expect(snapshot.next?.text ?? '').not.toContain('$(')
   })
 
   test('the newest track is the one followed, and a named one is pinned', () => {

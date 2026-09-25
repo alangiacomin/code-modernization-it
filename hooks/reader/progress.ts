@@ -1,4 +1,5 @@
 import { join } from '../paths'
+import { isSystemName, isToken, plain } from '../text'
 import { parseBrief, type Brief, type Phase } from './brief'
 import { discoverEstate, sourceSizes } from './discover'
 import { estateOfTopology, keysOfUnit, type EstateModel, type EstateUnit } from './estate-model'
@@ -183,7 +184,8 @@ export async function systemsOf(fs: ReaderFs, legacyDir = 'legacy'): Promise<str
 
   for (const root of ['analysis', legacyDir]) {
     for (const entry of await listOrEmpty(fs, root)) {
-      if (entry.kind === 'dir' && !entry.name.startsWith('.')) {
+      // The names the plugin's workflows accept: anything else could not be run on, and is not put in a command or a note.
+      if (entry.kind === 'dir' && isSystemName(entry.name)) {
         names.add(entry.name)
       }
     }
@@ -274,10 +276,13 @@ function nextOfTransform(
     })
 
     if (open !== undefined) {
+      // A module id is text from the map: it goes in a command only when it is one plain token.
+      const isNamed = isToken(open)
+
       return {
-        text: cmd('transform', `${open}${target === '' ? '' : ` ${target}`}`),
-        isByHand: false,
-        reason: `Phase ${phase.number} names ${open} and it is not reviewed yet`,
+        text: cmd('transform', `${isNamed ? open : '<module>'}${target === '' ? '' : ` ${target}`}`),
+        isByHand: !isNamed,
+        reason: `Phase ${phase.number} names ${plain(open, 60)} and it is not reviewed yet`,
       }
     }
 
