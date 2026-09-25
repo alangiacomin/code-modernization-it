@@ -121,6 +121,21 @@ class ToleranceTests(unittest.TestCase):
             res = self.run_cases([self.case("a", legacy, new, tolerance=TOL)])
             self.assertEqual(res["cases"][0]["verdict"], "differs")
 
+    def test_an_input_can_be_approved_once_for_every_case_that_shares_its_label(self):
+        cases = [self.case("F23-a", b"one\n", b"two\n", input="F23"), self.case("F23-b", b"x\n", b"y\n", input="F23"),
+                 self.case("F24-a", b"p\n", b"q\n", input="F24"), self.case("F25-a", b"same\n", b"same\n", input="F25")]
+        res = self.run_cases(cases, approvedInputs={"F23": "system owner accepts deviation 4", "F25": "  ", "F99": "no such input"})
+        verdicts = {r["id"]: r["verdict"] for r in res["cases"]}
+        self.assertEqual(verdicts, {"F23-a": "differs-approved", "F23-b": "differs-approved", "F24-a": "differs", "F25-a": "same"})
+        self.assertEqual(res["totals"]["differsApproved"], 2)
+        self.assertIn("system owner accepts deviation 4", res["cases"][0]["reason"])
+        self.assertEqual(res["cases"][2]["approvedDifference"], "")   # a blank reason approves nothing
+        # a case's own reason wins, and a per-input approval never turns a missing file into a pass
+        own = self.run_cases([self.case("G1", b"a\n", b"b\n", input="G", approvedDifference="own reason"), dict(self.case("G2", b"a\n", b"a\n", input="G"), new="new/nothing")],
+                             approvedInputs={"G": "input reason"})
+        self.assertEqual(own["cases"][0]["approvedDifference"], "own reason")
+        self.assertEqual(own["cases"][1]["verdict"], "missing")
+
     def test_masks_and_tolerance_work_together(self):
         res = self.run_cases([self.case("a", b"at 2026-09-24 10:00:00 value 2.0000000001\n", b"at 2027-01-01 11:11:11 value 2.0000000002\n",
                                         mask=[{"regex": r"\d{4}-\d\d-\d\d \d\d:\d\d:\d\d", "why": "run time"}], tolerance=TOL)])

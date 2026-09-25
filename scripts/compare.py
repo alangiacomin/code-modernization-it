@@ -23,6 +23,10 @@ position of a difference and a variable-length match still compares equal. A cas
   differs   different; the first difference is recorded (a person may approve it: differs-approved)
   missing   a file is absent, unreadable or outside the cases folder. Never a pass.
 
+A person who accepts a difference records it on the case (`"approvedDifference": "why"`), or once for every
+case that shares an `input` label with a top-level `"approvedInputs": {"F23": "why"}`. A reason is required either way, and an approved difference is still listed as a
+difference in the result.
+
 Numbers that a run legitimately prints a little differently (floating-point results from another
 compiler or math library) can be compared within a declared tolerance, per case or for all cases:
 
@@ -262,14 +266,15 @@ def rel_to(path, folder):
         return path
 
 
-def judge(case, index, base, out_dir, allow_outside, default_tolerance=None):
+def judge(case, index, base, out_dir, allow_outside, default_tolerance=None, approved_inputs=None):
     """-> (case record, legacy bytes or None, masks)."""
     cid = clip(str(case.get("id") or "C%02d" % (index + 1)), 80)
     masks = parse_masks(case.get("mask"), cid)
     tol = parse_tolerance(case["tolerance"] if "tolerance" in case else default_tolerance, cid)
     rec = {"id": cid, "title": clip(case.get("title"), 300), "verdict": "missing", "reason": "",
            "legacyPath": "", "newPath": "", "legacySha256": "", "newSha256": "",
-           "masked": [m[2] for m in masks], "approvedDifference": clip(case.get("approvedDifference"), 500),
+           "masked": [m[2] for m in masks],
+           "approvedDifference": clip(case.get("approvedDifference") or (approved_inputs or {}).get(str(case.get("input", "")), ""), 500),
            "note": clip(case.get("note"), 500)}
     data, problems = {}, []
     for side in ("legacy", "new"):
@@ -388,10 +393,11 @@ def run(cases_path, out_path=None, allow_outside=False):
     base = os.path.dirname(os.path.abspath(cases_path))
     out_dir = os.path.dirname(os.path.abspath(out_path)) if out_path else base
     records, items, ids = [], [], set()
+    approved = {str(k): v for k, v in spec["approvedInputs"].items() if isinstance(v, str) and v.strip()} if isinstance(spec.get("approvedInputs"), dict) else {}
     for i, case in enumerate(spec["cases"]):
         if not isinstance(case, dict):
             raise InputError("case %d is not an object" % (i + 1))
-        rec, data, masks, tol = judge(case, i, base, out_dir, allow_outside, spec.get("tolerance"))
+        rec, data, masks, tol = judge(case, i, base, out_dir, allow_outside, spec.get("tolerance"), approved)
         if rec["id"] in ids:
             raise InputError("duplicate case id %r" % rec["id"])
         ids.add(rec["id"])

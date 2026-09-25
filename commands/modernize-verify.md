@@ -122,8 +122,8 @@ a rule is wrong, say so and leave the file as it is.
 Refresh the report (`python3 "${CLAUDE_PLUGIN_ROOT}/scripts/build_report.py" $system`, a convenience: if it fails or `python3` is
 missing, say so in one line and carry on), then name the next step. **PARTLY PROVEN or NOT PROVEN:** turn each reason, in order, into a
 command. A failure caused by this machine: run the suite where the tool works (a terminal outside the sandbox, or CI), then run this
-command again. A difference the notes call intended: a person records it (`approvedDifference` in the case, or the table in
-`BASELINE.md`); you never do. P0 rules no test names: add the rule id to each test that pins it, then run this again. Any other failing
+command again. A difference the notes call intended: a person records it (once per input with `"approvedInputs": {"F23": "why"}` at the top of
+`fresh-cases.json`, or `approvedDifference` in one case, or the table in `BASELINE.md`); you never do. P0 rules no test names: add the rule id to each test that pins it, then run this again. Any other failing
 test or difference: `/code-modernization:modernize-transform $system <module>`, or for an uplift `/code-modernization:modernize-uplift $system`
 (also for a baseline typed by hand, which is measured again in its Step 4, and for a silent delta no test names, which gets a
 characterization test there). Removed or changed test files are a person's review, never yours to undo.
