@@ -22,19 +22,26 @@ The code is `legacy/$system` (a copy, or a symlink to where it really lives). If
 `--source <path>`, use that path. Pick a short name for it (letters, digits, `-` and `_`) if none was given. Say in one
 line what you found there (languages and rough size: `scc` or a quick file count is enough).
 
-## 3 — Ask what they want (one pop-up, at most three questions)
+## 3 — Ask what they want (two short pop-ups at most)
 
 Use the AskUserQuestion tool, never chat text; without it (a headless run) pick the defaults and record them as open
-items. Give each question plain options and let them type their own.
+items. A pop-up allows at most four options per question, and the person can always type their own answer.
 
-1. **What do you want to do with it?** Options: *Move to a newer version of the same technology* (for example .NET
-   Framework to .NET 8, Java 8 to 17, Python 2 to 3), *Rewrite it in a different technology, one piece at a time, while
-   the old system keeps running*, *Rebuild it from scratch on a new architecture*, *Just understand it first: map it and
-   list what it does*, *I'm not sure: recommend one after a quick look*.
-2. **What should it become?** Only for a version move (from which version to which), a rewrite (the target language or
-   framework) or a rebuild (a sentence about the goal). Offer common choices for the code's stack, and "Other".
-3. **What must stay true?** Options (pick any): *The old system keeps running during the move*, *Behavior must match
-   exactly, including known quirks*, *Fix known bugs as we go*, *A security review comes first*, *Nothing else*.
+**Pop-up 1, two questions:**
+
+1. **What do you want to do with it?** *Move to a newer version of the same technology* (for example .NET Framework to
+   .NET 8, Java 8 to 17, Python 2 to 3), *Rewrite it in a different technology, one piece at a time, while the old system
+   keeps running*, *Rebuild it from scratch on a new architecture*, *Understand it first: map it and list what it does*
+   (also the right choice when they are not sure: the assessment then recommends one of the other three).
+2. **What must stay true?** Pick any: *The old system keeps running during the move*, *Behavior must match exactly,
+   including known quirks*, *Fix known bugs as we go*, *A security review comes first*. Choosing none means nothing
+   special.
+
+**Pop-up 2, one question, only after the first answer and never for "understand it first":** *What should it become?*
+Tailor it to what you found in step 2: for a version move, the newest supported versions of the code's stack ("Java
+21", "Java 17"); for a rewrite, two or three common target technologies for this kind of code; for a rebuild, the
+architecture options that fit (a REST API with a separate front end, a few services, a modular monolith). The person
+can type any other target.
 
 ## 4 — Write it down once
 
@@ -45,7 +52,7 @@ is asked twice: `brief` takes its target stack from it and never overrides it wi
 ## 5 — Show the road
 
 In at most eight lines, tailored to their goal, list the commands they will run in order (`preflight`, `assess`, `map`,
-`extract-rules`, `brief`, then `uplift`, `transform` or `reimagine`, then `verify` and `harden`), one line each on what they get
+`extract-rules`, `review` when rules are flagged for a person, `brief`, then `uplift`, `transform` or `reimagine`, then `verify` and `harden`), one line each on what they get
 and where a person decides. For "understand it first" stop after `brief`. For "not sure", run `preflight` and `assess`
 first and let the assessment's recommended pattern pick the road. Name the two places a human decides (approving the brief,
 accepting each difference the proof finds) so nothing surprises them.

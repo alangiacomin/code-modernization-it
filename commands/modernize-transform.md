@@ -8,7 +8,7 @@ Transform module **`$module`** of `$system` into **$target_stack**, with proof o
 equivalence. This is one vertical slice of the strangler fig; output goes to
 `modernized/$system/$module/`.
 
-The code is `legacy/$system`, often a symlink to where it really lives: say where it points (`readlink legacy/$system`) in one line before you start. Run every subagent in the foreground and wait for its result: never end your turn while one is still running. **If `$module` or `$target_stack` is empty**, read
+The code is `legacy/$system`, often a symlink to where it really lives: say where it points (`readlink legacy/$system`) in one line before you start. If `legacy/$system` does not exist, stop and say so: nothing can run without the code, so the fix is `/code-modernization:modernize $system --source <path to the code>`. Run every subagent in the foreground and wait for its result: never end your turn while one is still running. Stop any server or other process you started (a legacy app on a local port, a watcher) before you finish, and say you did. **If `$module` or `$target_stack` is empty**, read
 `analysis/$system/MODERNIZATION_BRIEF.md`: take the target stack it names, and the first module of
 the earliest phase whose `Command:` is `transform` that has no
 `modernized/$system/<module>/TRANSFORMATION_NOTES.md` yet (with no brief, the target in `INTENT.md`). Say which you picked.
@@ -27,12 +27,19 @@ against **recorded traces and golden-master fixtures** (real production outputs,
 SME-confirmed examples). Say so in the plan and in `TRANSFORMATION_NOTES.md` ("equivalence is
 trace-based; legacy was not executable here"), so reviewers know how strong the proof is.
 
+**Run the old system only where it is safe.** Record baselines from the legacy code running on this
+machine, or against a test environment the person named. Never call a production or third-party
+service, register an account, or send or change real data to record a baseline unless the person
+approved that exact target in the plan (say which calls, and which of them write). A token, password
+or session cookie in a recorded response is a secret: replace it with a fixed fake value before
+anything is saved, and never print it.
+
 **The brief is binding.** If `MODERNIZATION_BRIEF.md` exists, find the phase whose `Command:` is this
 one and whose `Modules:` include `$module`, and treat its scope, entry criteria, exit criteria and any
 edits the user made as binding. An unmet entry criterion is the next step: meet it, never re-plan
 around it. If no phase covers `$module`, stop and ask which phase this is.
 
-Read the module's source and the rules in `BUSINESS_RULES.md` that reference it. Then present the
+Read the module's source and the rules in `BUSINESS_RULES.md` that reference it, and any verdicts on them in `analysis/$system/RULE_REVIEWS.json`: a rule marked `wrong` is not pinned as the oracle (use the reviewer's note for what is right, and if the note does not say, ask), and a P0 rule marked `discuss` is a question to settle at this plan gate before any code. Then present the
 plan and **stop: write no code until the user explicitly approves** (plan mode if available): which
 source files are in scope, the target structure, which rules and behaviors it implements, how you will
 prove equivalence, and anything ambiguous that needs a human decision now.

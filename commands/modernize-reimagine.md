@@ -6,7 +6,7 @@ arguments: system
 
 The first token of `$ARGUMENTS` is the system name (`$system`); **everything after it is the target
 vision**, usually several words, so do not truncate it (with none, use the one in `analysis/$system/INTENT.md`). Below, `<vision>` means that whole remainder.
-The code is `legacy/$system`, often a symlink to where it really lives: say where it points (`readlink legacy/$system`) in one line before you start. Run every subagent in the foreground and wait for its result: never end your turn while one is still running.
+The code is `legacy/$system`, often a symlink to where it really lives: say where it points (`readlink legacy/$system`) in one line before you start. If `legacy/$system` does not exist, stop and say so: nothing can run without the code, so the fix is `/code-modernization:modernize $system --source <path to the code>`. Run every subagent in the foreground and wait for its result: never end your turn while one is still running. Stop any server or other process you started (a legacy app on a local port, a watcher) before you finish, and say you did.
 
 **Reimagine** the system as: <vision>. This is not a port but a rebuild from extracted intent: the legacy
 system is the *specification source*, not the structural template. The command orchestrates a team of
@@ -20,7 +20,7 @@ around it. If no phase matches, stop and ask which phase this is.
 
 ## Phase A — Specification mining
 
-Reuse what discovery already produced: `BUSINESS_RULES.md`, `DATA_OBJECTS.md`, `topology.json` and
+Reuse what discovery already produced (honoring `RULE_REVIEWS.json`: a rule marked `wrong` is not part of the spec as written, and a P0 rule marked `discuss` is a question for the architecture checkpoint): `BUSINESS_RULES.md`, `DATA_OBJECTS.md`, `topology.json` and
 `ASSESSMENT.md` in `analysis/$system/`. Spawn concurrently (and tell the user all are running) only the
 agents whose input is missing:
 

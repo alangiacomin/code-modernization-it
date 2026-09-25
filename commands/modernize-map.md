@@ -8,7 +8,7 @@ Build a **dependency and topology map** of the system and render it as an
 interactive page. The assessment found the domains; this goes one level down:
 how do the *pieces* connect? It is the map an engineer needs before touching anything.
 
-The code is `legacy/$system`, often a symlink to where it really lives: say where it points (`readlink legacy/$system`) in one line before you start. Run every subagent in the foreground and wait for its result: never end your turn while one is still running.
+The code is `legacy/$system`, often a symlink to where it really lives: say where it points (`readlink legacy/$system`) in one line before you start. If `legacy/$system` does not exist, stop and say so: nothing can run without the code, so the fix is `/code-modernization:modernize $system --source <path to the code>`. Run every subagent in the foreground and wait for its result: never end your turn while one is still running.
 
 ## Start from what already exists
 

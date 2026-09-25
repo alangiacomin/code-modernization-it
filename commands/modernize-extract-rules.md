@@ -10,7 +10,7 @@ engineers about to retire. If a module pattern was given (`$module_pattern`), fo
 there; otherwise cover the whole system. Prioritize calculation, validation, eligibility
 and state-transition logic over plumbing.
 
-The code is `legacy/$system`, often a symlink to where it really lives: say where it points (`readlink legacy/$system`) in one line before you start. Run every subagent in the foreground and wait for its result: never end your turn while one is still running.
+The code is `legacy/$system`, often a symlink to where it really lives: say where it points (`readlink legacy/$system`) in one line before you start. If `legacy/$system` does not exist, stop and say so: nothing can run without the code, so the fix is `/code-modernization:modernize $system --source <path to the code>`. Run every subagent in the foreground and wait for its result: never end your turn while one is still running.
 
 ## Method A — Workflow (preferred when the Workflow tool is available)
 
@@ -147,4 +147,4 @@ confirmation** section listing each Medium and Low rule with its question.
 
 Report: total rules, breakdown by category, how many need SME review, and (Method A) how many
 candidates the referees rejected: that number is the quality the verification bought. Refresh the
-report: `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/build_report.py" $system` (a convenience: if it fails or `python3` is missing, say so in one line and carry on). The next step is `/code-modernization:modernize-brief $system <target-stack>`.
+report: `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/build_report.py" $system` (a convenience: if it fails or `python3` is missing, say so in one line and carry on). The next step is `/code-modernization:modernize-review $system` when rules are flagged for a person (P0 rules with a suspected defect, an SME question or less than High confidence: give the count), then `/code-modernization:modernize-brief $system <target-stack>`; with none flagged, go straight to the brief.

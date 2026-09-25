@@ -11,8 +11,12 @@ document a steering committee approves and engineering executes. Target stack:
 Read `ASSESSMENT.md`, `topology.json` (and the `.mmd` files beside it; never read
 `TOPOLOGY.html`, it is a viewer with the data minified inside) and `BUSINESS_RULES.md`
 in `analysis/$system/` first. If any is missing, say so and stop: they come from `assess`,
-`map` and `extract-rules`, which run first. Three more inputs are conditional:
+`map` and `extract-rules`, which run first. Four more inputs are conditional:
 
+- **`RULE_REVIEWS.json` / `RULE_REVIEWS.md`**, if they exist (written by `/code-modernization:modernize-review`):
+  a person's verdicts on individual rules. Never put a rule marked `wrong` or `discuss` in the Behavior
+  Contract as settled behavior: list each in section 7 as an open question with the reviewer's note, and
+  block the phase that covers its module on it. A `confirmed` rule counts as confirmed by a person.
 - **`INTENT.md`**, if it exists (written by `/code-modernization:modernize`): what the person wants (goal, target,
   what must stay true). It is the objective of this plan; never override it with a guess. Its goal decides each
   phase's build command: a newer version of the same technology means `uplift`, a rewrite in another technology

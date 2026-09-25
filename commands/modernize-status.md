@@ -21,12 +21,14 @@ presence and modification time:
 | assess | `ASSESSMENT.md`, `ARCHITECTURE.mmd` |
 | map | `topology.json`, `TOPOLOGY.html`, `*.mmd`, `extract_topology.*` |
 | extract-rules | `BUSINESS_RULES.md`, `DATA_OBJECTS.md` |
+| review | `RULE_REVIEWS.json`: how many flagged rules a person has decided (confirmed, wrong, needs discussion), and how many are still open |
 | brief | `MODERNIZATION_BRIEF.md` (is the approval block signed?) |
 | harden | `SECURITY_FINDINGS.md`, `security_remediation.patch` |
 | uplift | `DELTA_CATALOG.md`, `BASELINE.md`, `PLAYBOOK.md` (no playbook means the pilot has not happened, so the fan-out must not), `modernized/$system-uplifted/UPLIFT_NOTES.md` (per unit: builds on target? baseline reproduced?) |
 | transform | each `modernized/$system/<module>/`: tests present? `TRANSFORMATION_NOTES.md` present (its completion marker)? |
 | reimagine | `modernized/$system-reimagined/`: per-service acceptance tests, and the `CLAUDE.md` handoff (its completion marker; it does not write `TRANSFORMATION_NOTES.md`) |
 | equivalence | `EQUIVALENCE.json`: cases executed, same, differs (any differing or missing case, or zero executed, is a failure) |
+| verify | `VERIFICATION.md` (written by `/code-modernization:modernize-verify`): the verdict per built module (PROVEN, PARTLY PROVEN or NOT PROVEN) and whether a person has signed it. A built module with no `VERIFICATION.md`, or one older than the module's code or tests, is **not proven yet** |
 
 ## 2 — Stale
 
@@ -47,8 +49,9 @@ recommend rotation and history scrubbing.
 
 End with three lines:
 
-- **Where you are:** the furthest completed stage and how much it covers ("mapped 100%, 2 of 14 modules transformed").
+- **Where you are:** the furthest completed stage and how much it covers ("mapped 100%, 2 of 14 modules transformed, 1 proven").
 - **What is stale:** or "nothing".
 - **Next command:** the single most useful next step as the exact command line to paste, with a one-line reason.
-  The order is preflight, assess, map, extract-rules, brief (needs approval), then the brief's Phase 1 command
-  (`transform`, `uplift` or `reimagine`), then `harden`.
+  The order is preflight, assess, map, extract-rules, review (when rules are flagged for a person), brief (needs approval), then the brief's Phase 1 command
+  (`transform`, `uplift` or `reimagine`), then `verify` for what was built, then `harden`. Never call a
+  built module done until `verify` says PROVEN and a person has signed it: put `verify` ahead of building the next module.

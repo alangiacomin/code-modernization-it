@@ -76,7 +76,7 @@ Check availability (`command -v`), version and what degrades without it:
 | Tool | Used by | Without it |
 |---|---|---|
 | `scc` (or `cloc`) | assess | LOC and complexity fall back to `find` + `wc`; the COCOMO index gets coarser |
-| `python3` | map, report | dependency scripts and the HTML report can't run |
+| `python3` (3.8 or newer; on Windows it may be `python` or `py -3`: use whichever runs Python 3 wherever a command says `python3`) | map, extract-rules, verify, report | the dependency scripts, the shard builder, the proof scripts and the HTML report can't run |
 | `lizard` | assess --portfolio | complexity is estimated from decision-keyword counts |
 
 Give the platform's install one-liner for anything missing.
