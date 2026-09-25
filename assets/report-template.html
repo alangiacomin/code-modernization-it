@@ -255,6 +255,11 @@ function stat(label, value, small) { return h('div', {class: 'stat'}, [h('dt', n
 /* ---- at a glance */
 function renderGlance() {
   var g = D.glance || {}, box = $('glance'), kids = [h('h2', {id: 'glance-h'}, ['At a glance'])], s = [], eq = g.equivalence;
+  if (g.proof) {
+    kids.push(h('div', {class: 'banner ' + own(VERDICT_TONE, g.proof.verdict, 'bad'), role: 'status'}, [own(VERDICT_MARK, g.proof.verdict, '✗ ') + g.proof.headline].concat(
+      (g.proof.problems || []).slice(0, 3).map(function (t) { return h('p', null, [t]); }),
+      (g.proof.modules || []).map(function (m) { return h('p', null, [m.name + ': ' + m.verdict]); }), [h('p', null, [h('a', {href: '#sec-proof'}, ['See the proof'])])])));
+  }
   if (eq) {
     kids.push(h('div', {class: 'banner ' + (eq.state === 'green' ? 'ok' : 'bad'), role: 'status'}, [(eq.state === 'green' ? '✓ ' : '✗ ') + eq.headline].concat(
       (eq.problems || []).slice(0, 3).map(function (p) { return h('p', null, [p]); }), [h('p', null, [h('a', {href: '#sec-equivalence'}, ['See the case table'])])])));
@@ -307,6 +312,61 @@ function partEquiv(eq) {
   return out;
 }
 
+/* proof:start -- the proof section (VERIFICATION.json). Text only ever reaches the page through h() and text nodes. */
+var VERDICT_TONE = {'PROVEN': 'ok', 'PARTLY PROVEN': 'warn', 'NOT PROVEN': 'bad'}, VERDICT_MARK = {'PROVEN': '✓ ', 'PARTLY PROVEN': '◐ ', 'NOT PROVEN': '✗ '};
+var CHECK_WORD = {pass: 'pass', gap: 'not proven', fail: 'FAIL', na: 'not applicable'}, CHECK_TONE = {pass: 'ok', gap: 'warn', fail: 'bad', na: ''};
+var RULE_TONE = {'tested': 'ok', 'claimed only': 'warn', 'code only': 'warn', 'none': 'bad'};
+function own(map, key, dflt) { return Object.prototype.hasOwnProperty.call(map, key) ? map[key] : dflt; }
+function badge(text, tn) { return {badge: true, text: text, tone: tn}; }
+function plainTable(label, head, rows) {
+  return h('div', {class: 'tw', role: 'region', tabindex: '0', 'aria-label': label}, [h('table', null, [
+    h('thead', null, [h('tr', null, head.map(function (c) { return h('th', {scope: 'col'}, [c]); }))]),
+    h('tbody', null, rows.map(function (r) { return h('tr', null, r.map(function (c) { return h('td', null, [c && c.badge ? h('span', {class: 'badge ' + c.tone}, [c.text]) : String(c == null ? '' : c)]); })); }))])]);
+}
+function bullets(title, items) { return items.length ? [h('h4', null, [title]), h('ul', null, items.map(function (t) { return h('li', null, [t]); }))] : []; }
+function proofModule(m) {
+  var t = m.tests || {}, out = [h('h3', null, [m.name + (m.track ? ' (' + m.track + ')' : '')]),
+    h('div', {class: 'banner ' + own(VERDICT_TONE, m.verdict, 'bad'), role: 'status'}, [own(VERDICT_MARK, m.verdict, '✗ ') + m.name + ': ' + m.verdict + (m.verifiedAt ? '. Checked ' + m.verifiedAt + '.' : '')])];
+  out = out.concat(bullets('What is missing or wrong', m.reasons || []), bullets('What passed', m.passed || []));
+  out.push(plainTable('Checks', ['Check', 'Result', 'Detail'], (m.checks || []).map(function (c) { return [c.label, badge(own(CHECK_WORD, c.state, c.state), own(CHECK_TONE, c.state, 'bad')), c.detail]; })));
+  out.push(h('ul', {class: 'chips'}, [chip('tests executed: ' + fmt(t.executed || 0)), chip('failed: ' + fmt(t.failed || 0)), chip('skipped: ' + fmt(t.skipped || 0))]));
+  if (m.hasRules) {
+    var c = m.p0Counts || {};
+    out.push(h('h4', null, ['P0 business rules: ' + fmt(c.tested || 0) + ' tested, ' + fmt(c.claimedOnly || 0) + ' claimed only, ' + fmt(c.none || 0) + ' with no test']));
+    if ((m.p0 || []).length) out.push(plainTable('P0 rules', ['Rule', 'Name', 'Confidence', 'Result', 'Tests', 'Code', 'A test that names it'],
+      m.p0.map(function (r) { return [r.id, r.name, r.confidence || '?', badge(r.status, own(RULE_TONE, r.status, 'bad')), fmt(r.tests), fmt(r.main), r.tests ? r.where : '']; })));
+  }
+  var e = m.equivalence, f = m.fresh, b = m.baseline;
+  var within = function (x) { return x.withinTolerance ? ' (' + fmt(x.withinTolerance) + ' within a declared tolerance)' : ''; }, tol = function (k) { out.push(h('p', {class: 'note'}, ['Declared tolerance (relative ' + k.rel + ', absolute ' + k.abs + '), ' + fmt(k.cases) + ' case(s): ' + k.why])); };
+  if (e) out.push(h('p', null, ['Development cases judged again: ' + fmt(e.executed) + ' of ' + fmt(e.cases) + ' executed, ' + fmt(e.same) + ' same' + within(e) + ', ' + fmt(e.differs) + ' differ, ' + fmt(e.missing) + ' missing.']));
+  if (e) (e.tolerances || []).forEach(tol);
+  if (e) (e.approved || []).forEach(function (a) { out.push(h('p', {class: 'note'}, ['Approved difference ' + a.id + ': ' + a.why])); });
+  if (e) (e.masks || []).forEach(function (k) { out.push(h('p', {class: 'note'}, ['Ignored by the comparison: ' + k.why + ' (' + fmt(k.cases) + ' cases).'])); });
+  if (f) out.push(h('p', null, ['Fresh inputs: ' + fmt(f.inputs) + ' new input(s) counted from ' + fmt(f.executed) + ' comparisons: ' + fmt(f.same) + ' same' + within(f) + ', ' + fmt(f.differs) + ' differ, ' + fmt(f.missing) + ' missing.']));
+  if (f) (f.tolerances || []).forEach(tol);
+  if (b) out.push(h('p', null, ['Baseline comparison: ' + fmt(b.regressionsCount) + ' regressions, ' + fmt(b.newFailuresCount) + ' new failures, ' + fmt(b.fixedCount) + ' fixed, ' + fmt(b.missingCount) + ' missing.']));
+  (m.canary || []).forEach(function (k) { out.push(h('p', {class: 'note'}, ['Canary' + (k.shown ? '' : ' (claimed only, no result file shows it)') + ': ' + k.change + ': ' + fmt(k.testsFailed) + ' tests failed.'])); });
+  out = out.concat(bullets('Caveats', m.caveats || []), bullets('What this does not prove', m.notProven || []));
+  var people = (m.people || []).map(function (i) { return '☐ ' + i.text + (i.where ? ' [' + i.where + ']' : ''); }).concat((m.needsPerson || []).map(function (i) { return '☐ ' + i; }));
+  out.push(h('h4', null, ['Waiting for a person']));
+  out.push(h('p', {class: 'note'}, ['Claude never ticks these. A person decides them.' + (m.peopleCount > (m.people || []).length ? ' ' + fmt(m.peopleCount - m.people.length) + ' more are in the brief.' : '')]));
+  out.push(people.length ? h('ul', null, people.map(function (t) { return h('li', null, [t]); })) : h('p', null, [m.briefFound ? 'The brief lists no unticked criterion for this module.' : 'No brief was found, so no criterion could be listed.']));
+  return out;
+}
+function partProof(pv) {
+  var out = [h('div', {class: 'banner ' + own(VERDICT_TONE, pv.verdict, 'bad'), role: 'status'}, [own(VERDICT_MARK, pv.verdict, '✗ ') + pv.headline])];
+  (pv.problems || []).forEach(function (t) { out.push(h('p', {class: 'note'}, [t])); });
+  var lg = pv.legacy || {};
+  if (lg.path) out.push(h('p', {class: 'note'}, ['Legacy source: ' + lg.path + (lg.target ? ' (a link to ' + lg.target + ')' : '') + '. ' + (lg.ran === true ? 'It could run here.' : lg.ran === false ? 'It could not run here, so the proof is trace-based.' : 'Whether it could run here is not stated.')]));
+  (pv.modules || []).forEach(function (m) { out = out.concat(proofModule(m)); });
+  var so = pv.signoff || {}, line = function (v, dflt) { return v || dflt; };
+  out.push(h('h3', null, ['Sign-off']), h('p', {class: 'note'}, ['A person fills this in. Claude leaves it blank.']),
+    plainTable('Sign-off', ['Field', 'Entry'], [['Name', line(so.name, '________________')], ['Role', line(so.role, '________________')], ['Date', line(so.date, '__________')], ['Decision', line(so.decision, 'accept / accept with conditions / reject')]]));
+  if ((pv.rules || []).length) out.push(h('details', null, [h('summary', null, ['How the verdict is computed'])].concat([h('ul', null, pv.rules.map(function (t) { return h('li', null, [t]); }))])));
+  return out;
+}
+/* proof:end */
+
 /* ---- sections */
 function partNodes(p) {
   switch (p.t) {
@@ -334,6 +394,7 @@ function partNodes(p) {
     case 'facts': return [h('ul', {class: 'chips'}, p.items.map(function (i) { return chip(i[0] + ': ' + i[1]); }))];
     case 'link': var u = safeUrl(p.href); return [h('p', null, u ? [h('a', {href: u}, [p.text])] : [p.text])];
     case 'equiv': return partEquiv(p.eq);
+    case 'proof': return partProof(p.proof);
     default: return [h('p', null, [String(p.text || '')])];
   }
 }
@@ -368,8 +429,8 @@ function ensure(sec) {
 /* ---- diagrams: Mermaid in strict mode; anything that fails shows its source */
 var mmSeq = 0, mmReady = false, mmChain = Promise.resolve();
 function drawQueue(items) { items.forEach(function (it) { mmChain = mmChain.then(function () { return draw(it); }); }); }
-function fail(host, src, e) {
-  var msg = String((e && e.message) || e || 'unknown error').split('\n')[0].slice(0, 160);
+function fail(it, src, e) {
+  var host = it.el, msg = String((e && e.message) || e || 'unknown error').split('\n')[0].slice(0, 160);
   host.textContent = '';
   host.appendChild(h('p', {class: 'note'}, ['This diagram could not be drawn (' + msg + '). Its source is shown instead.']));
   host.appendChild(h('pre', {tabindex: '0'}, [h('code', null, [src])]));
@@ -401,7 +462,7 @@ async function draw(it) {
     it.el.appendChild(document.importNode(svg, true));
   } catch (e) {
     [id, 'd' + id].forEach(function (x) { var n = $(x); if (n && n.parentNode) n.parentNode.removeChild(n); });
-    fail(it.el, src, e);
+    fail(it, src, e);
   }
 }
 
@@ -412,6 +473,7 @@ function textOf(sec) {
     (p.blocks || []).forEach(function (b) { t.push(b.k === 'rule' ? [b.id, b.title, b.cat, b.cites.join(' '), b.body].join(' ') : b.text); });
     (p.items || []).forEach(function (i) { t.push(typeof i === 'string' ? i : Array.isArray(i) ? i.join(' ') : i.name + ' ' + i.src); });
     (p.rows || []).forEach(function (r) { t.push(r.join(' ')); });
+    if (p.proof) { t.push(p.proof.headline); p.proof.modules.forEach(function (m) { t.push([m.name, m.verdict, m.reasons.join(' '), m.passed.join(' '), m.p0.map(function (r) { return r.id + ' ' + r.name; }).join(' '), m.notProven.join(' '), m.people.map(function (i) { return i.text; }).join(' ')].join(' ')); }); }
     if (p.eq) { t.push(p.eq.headline); p.eq.cases.forEach(function (c) { t.push([c.id, c.title, c.reason, c.approvedDifference, c.note].join(' ')); }); }
     t.push(p.text || '', p.name || '', p.title || '');
   });

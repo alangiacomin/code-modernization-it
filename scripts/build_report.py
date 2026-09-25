@@ -35,7 +35,7 @@ STEPS = [("preflight", "Preflight"), ("assess", "Assess"), ("map", "Map"), ("rul
 TITLES = [("overview", "Overview"), ("assessment", "Assessment"), ("diagrams", "Diagrams"),
           ("rules", "Business rules"), ("brief", "Brief"), ("security", "Security"),
           ("delta", "Delta catalog & baseline"), ("spec", "Spec & architecture"),
-          ("build", "Build notes"), ("equivalence", "Equivalence")]
+          ("build", "Build notes"), ("proof", "Proof"), ("equivalence", "Equivalence")]
 DOCS = [("overview", ["PREFLIGHT.md"]), ("assessment", ["ASSESSMENT.md"]),
         ("rules", ["BUSINESS_RULES.md", "RULE_REVIEWS.md", "DATA_OBJECTS.md"]), ("brief", ["MODERNIZATION_BRIEF.md"]),
         ("security", ["SECURITY_FINDINGS.md"]), ("delta", ["DELTA_CATALOG.md", "BASELINE.md", "PLAYBOOK.md"]),
@@ -318,6 +318,113 @@ def equivalence_view(obj):
             "legacy": endpoint(obj.get("legacy")), "new": endpoint(obj.get("new")), "cases": rows[:MAX_CASES], "cut": max(0, len(rows) - MAX_CASES)}
 
 
+# ---------------------------------------------------------------- the proof pack (VERIFICATION.json)
+PROOF_VERDICTS = ("PROVEN", "PARTLY PROVEN", "NOT PROVEN")
+PROOF_CHECKS = (("tests", "Tests ran"), ("rules", "Rules traced"), ("same", "Same behavior"), ("fresh", "Fresh inputs"), ("canary", "Canary"), ("source", "Source untouched"))
+RULE_STATES = ("tested", "claimed only", "code only", "none")
+FRESH_NEEDED = 10
+
+
+def text_of(value, limit=300):
+    return value[:limit] if isinstance(value, str) else ""
+
+
+def count_of(value):
+    return value if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 10 ** 9 else 0
+
+
+def texts_of(value, limit=300, cap=40):
+    return [v[:limit] for v in value[:cap] if isinstance(v, str)] if isinstance(value, list) else []
+
+
+def num_of(value):
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) and value == value and abs(value) < 1e300 else 0.0
+
+
+def tolerances_of(obj):
+    return [{"why": text_of(t.get("why"), 200), "rel": num_of(t.get("rel")), "abs": num_of(t.get("abs")), "cases": count_of(t.get("cases"))}
+            for t in (obj.get("tolerances") if isinstance(obj, dict) and isinstance(obj.get("tolerances"), list) else [])[:10] if isinstance(t, dict)]
+
+
+def counts_of(obj, keys):
+    obj = obj if isinstance(obj, dict) else {}
+    return {k: count_of(obj.get(k)) for k in keys}
+
+
+def proof_module(m, problems):
+    """One module of VERIFICATION.json, made safe, with its verdict recomputed from its own checks: the file's word is never taken."""
+    name = text_of(m.get("name"), 120) or "(unnamed)"
+    ev = m["evidence"] if isinstance(m.get("evidence"), dict) else {}
+    by_id = {}
+    for c in (m["checks"] if isinstance(m.get("checks"), list) else [])[:20]:
+        if isinstance(c, dict) and c.get("id") in dict(PROOF_CHECKS) and c.get("state") in ("pass", "gap", "fail", "na") and c["id"] not in by_id:
+            by_id[c["id"]] = {"id": c["id"], "label": dict(PROOF_CHECKS)[c["id"]], "state": c["state"], "detail": text_of(c.get("detail"), 700)}
+    tests = counts_of(ev.get("tests"), ("executed", "failed", "skipped"))
+    rules = ev["rules"] if isinstance(ev.get("rules"), dict) else None
+    p0 = [{"id": text_of(r.get("id"), 40), "name": text_of(r.get("name"), 200), "confidence": text_of(r.get("confidence"), 10),
+           "status": r.get("status") if r.get("status") in RULE_STATES else "none", "tests": count_of(r.get("tests")), "main": count_of(r.get("main")), "where": text_of(r.get("where"), 200)}
+          for r in (rules["p0"] if rules and isinstance(rules.get("p0"), list) else [])[:200] if isinstance(r, dict)]
+    fresh = dict(counts_of(ev.get("fresh"), ("inputs", "executed", "same", "differs", "missing", "withinTolerance")), tolerances=tolerances_of(ev.get("fresh"))) if isinstance(ev.get("fresh"), dict) else None
+    eq = ev.get("equivalence") if isinstance(ev.get("equivalence"), dict) else None
+    notes = []
+    for cid, label in PROOF_CHECKS:                     # a pack that leaves a check out cannot be PROVEN
+        if cid not in by_id:
+            by_id[cid] = {"id": cid, "label": label, "state": "gap", "detail": "This check is missing from VERIFICATION.json."}
+            notes.append("the %s check is missing" % label.lower())
+    if by_id["tests"]["state"] == "pass" and tests["executed"] == 0:
+        by_id["tests"].update(state="fail", detail="No test executed, whatever the file says.")
+        notes.append("it says tests passed but none executed")
+    if by_id["rules"]["state"] == "pass" and any(r["status"] != "tested" for r in p0):
+        by_id["rules"].update(state="gap", detail="Some P0 rules are not named by a test, whatever the file says.")
+        notes.append("it says every P0 rule is tested but the table shows otherwise")
+    if by_id["fresh"]["state"] == "pass" and (fresh is None or fresh["inputs"] < FRESH_NEEDED):
+        by_id["fresh"].update(state="gap", detail="Fewer than %d fresh inputs are recorded, whatever the file says." % FRESH_NEEDED)
+        notes.append("it says the fresh-input check passed with fewer than %d inputs" % FRESH_NEEDED)
+    for cid, bad in (("same", eq), ("fresh", fresh)):        # a pass cannot stand next to differing or missing cases
+        if by_id[cid]["state"] == "pass" and isinstance(bad, dict) and (count_of(bad.get("differs")) or count_of(bad.get("missing"))):
+            by_id[cid].update(state="fail", detail="Some cases differ or are missing, whatever the file says.")
+            notes.append("it says %s passed but cases differ or are missing" % by_id[cid]["label"].lower())
+    if by_id["tests"]["state"] == "pass" and tests["failed"] and text_of(m.get("track"), 20) != "uplift":
+        by_id["tests"].update(state="fail", detail="Some tests failed, whatever the file says.")
+        notes.append("it says tests passed but some failed")
+    checks = [by_id[cid] for cid, _ in PROOF_CHECKS]
+    states = {c["state"] for c in checks}
+    verdict = "NOT PROVEN" if "fail" in states else "PARTLY PROVEN" if "gap" in states else "PROVEN"
+    if m.get("verdict") in PROOF_VERDICTS and m.get("verdict") != verdict or notes:
+        problems.append("%s: the file recorded %s; its own evidence gives %s, so %s is shown%s." % (
+            name, text_of(m.get("verdict"), 20) or "no verdict", verdict, verdict, " (" + "; ".join(notes) + ")" if notes else ""))
+    base = ev.get("baseline") if isinstance(ev.get("baseline"), dict) else None
+    brief = m["brief"] if isinstance(m.get("brief"), dict) else {}
+    items = [{"text": text_of(i.get("text"), 300), "where": text_of(i.get("where"), 80)} for i in (brief.get("items") if isinstance(brief.get("items"), list) else [])[:40] if isinstance(i, dict)]
+    return {"name": name, "track": text_of(m.get("track"), 20), "verdict": verdict, "verifiedAt": text_of(m.get("verifiedAt"), 40), "checks": checks,
+            "reasons": ["%s: %s" % (c["label"], c["detail"]) for c in checks if c["state"] in ("fail", "gap")], "passed": ["%s: %s" % (c["label"], c["detail"]) for c in checks if c["state"] == "pass"],
+            "tests": tests, "hasRules": rules is not None, "p0": p0,
+            "p0Counts": {"tested": sum(1 for r in p0 if r["status"] == "tested"), "claimedOnly": sum(1 for r in p0 if r["status"] == "claimed only"), "none": sum(1 for r in p0 if r["status"] not in ("tested", "claimed only"))},
+            "equivalence": dict(counts_of(eq, ("cases", "executed", "same", "differs", "missing", "withinTolerance")), tolerances=tolerances_of(eq), approved=[{"id": text_of(a.get("id"), 80), "why": text_of(a.get("why"), 300)} for a in (eq.get("approved") if isinstance(eq.get("approved"), list) else [])[:20] if isinstance(a, dict)],
+                                masks=[{"why": text_of(k.get("why"), 200), "cases": count_of(k.get("cases"))} for k in (eq.get("masks") if isinstance(eq.get("masks"), list) else [])[:10] if isinstance(k, dict)]) if eq else None,
+            "fresh": fresh, "baseline": counts_of(base, ("regressionsCount", "newFailuresCount", "fixedCount", "missingCount", "renamed")) if base else None,
+            "canary": [{"change": text_of(c.get("change"), 200), "testsFailed": count_of(c.get("testsFailed")), "shown": c.get("shown") is True} for c in (ev.get("canary") if isinstance(ev.get("canary"), list) else [])[:10] if isinstance(c, dict)],
+            "notProven": texts_of(m.get("notProven"), 400, 12), "needsPerson": texts_of(m.get("needsPerson"), 300, 10), "caveats": texts_of(m.get("caveats"), 400, 20),
+            "people": items, "peopleCount": max(count_of(brief.get("count")), len(items)), "briefFound": brief.get("found") is True}
+
+
+def proof_view(obj):
+    """VERIFICATION.json as the page uses it, or None when it is not a proof pack. Every module's verdict is recomputed from its checks."""
+    if not isinstance(obj, dict) or not isinstance(obj.get("modules"), list):
+        return None
+    problems = texts_of(obj.get("problems"), 300, 10)
+    mods = [proof_module(m, problems) for m in obj["modules"][:100] if isinstance(m, dict)]
+    counts = {v: sum(1 for m in mods if m["verdict"] == v) for v in PROOF_VERDICTS}
+    verdict = "NOT PROVEN" if counts["NOT PROVEN"] or not mods else "PARTLY PROVEN" if counts["PARTLY PROVEN"] else "PROVEN"
+    lg = obj["legacy"] if isinstance(obj.get("legacy"), dict) else {}
+    so = obj["signoff"] if isinstance(obj.get("signoff"), dict) else {}
+    headline = "Proof: %s (%d module%s)." % (", ".join("%d %s" % (counts[v], v) for v in PROOF_VERDICTS if counts[v]) or "no module was verified", len(mods), "" if len(mods) == 1 else "s")
+    return {"generated": text_of(obj.get("generated"), 40), "verdict": verdict, "counts": counts, "headline": headline, "problems": problems, "modules": mods,
+            "legacy": {"path": text_of(lg.get("path"), 200), "target": text_of(lg.get("target"), 300), "ran": lg.get("ran") if isinstance(lg.get("ran"), bool) else None,
+                       "state": text_of(lg.get("state"), 20), "detail": text_of(lg.get("detail"), 300)},
+            "rules": texts_of(obj.get("rules"), 700, 12), "signoff": {k: text_of(so.get(k), 120) for k in ("name", "role", "date", "decision")}}
+
+
 # ---------------------------------------------------------------- assembling the report
 def nonempty_dir(p):
     try:
@@ -381,7 +488,7 @@ def build(system, workspace, out=None):
     parts, texts, docs = {k: [] for k, _ in TITLES}, [], {}
     reviews, _ = src.json(a("RULE_REVIEWS.json"), "RULE_REVIEWS.json")
     reviews = {k: v for k, v in reviews["reviews"].items() if isinstance(v, dict)} if isinstance(reviews, dict) and isinstance(reviews.get("reviews"), dict) else {}
-    glance = {"rules": None, "security": None, "baseline": None, "topology": None, "equivalence": None}
+    glance = {"rules": None, "security": None, "baseline": None, "topology": None, "equivalence": None, "proof": None}
 
     for key, names in DOCS:
         for name in names:
@@ -439,6 +546,15 @@ def build(system, workspace, out=None):
             glance["equivalence"] = {"state": "red", "headline": "EQUIVALENCE.json could not be used, so equivalence is not proven.", "problems": [], "tally": None}
             parts["equivalence"].append({"t": "p", "text": glance["equivalence"]["headline"]})
 
+    ver, ver_seen = src.json(a("VERIFICATION.json"), "VERIFICATION.json")
+    if ver_seen:
+        pv = proof_view(ver)
+        if pv:
+            parts["proof"].append({"t": "proof", "proof": pv})
+            glance["proof"] = {"verdict": pv["verdict"], "headline": pv["headline"], "counts": pv["counts"], "problems": pv["problems"][:3], "modules": [{"name": m["name"], "verdict": m["verdict"]} for m in pv["modules"][:8]]}
+        else:
+            glance["proof"] = {"verdict": "NOT PROVEN", "headline": "VERIFICATION.json could not be used, so nothing is proven.", "counts": {}, "problems": [], "modules": []}
+            parts["proof"].append({"t": "p", "text": glance["proof"]["headline"]})
     mods = [os.path.join(src.mdir, system + s) for s in ("", "-uplifted", "-reimagined")]
     done = {"preflight": "PREFLIGHT.md" in docs, "assess": "ASSESSMENT.md" in docs, "rules": "BUSINESS_RULES.md" in docs, "brief": "MODERNIZATION_BRIEF.md" in docs,
             "map": topo is not None or has_map or any(f["name"] != "ARCHITECTURE.mmd" for f in figures), "build": any(nonempty_dir(p) for p in mods), "harden": "SECURITY_FINDINGS.md" in docs}
