@@ -50,6 +50,7 @@ jobs:
           git fetch "$TEMP_DIR/upstream" main
 
       - name: Compare histories
+        id: compare
         run: |
           cd "$GITHUB_WORKSPACE"
 
@@ -79,3 +80,31 @@ jobs:
           echo
           echo "Changes since common ancestor:"
           git diff --stat main...FETCH_HEAD
+
+          if git diff --quiet main...FETCH_HEAD; then
+            echo "No upstream changes detected."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Upstream changes detected."
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "upstream_commit=$UPSTREAM_COMMIT" >> "$GITHUB_OUTPUT"
+
+      - name: Create sync branch
+        if: steps.compare.outputs.changed == 'true'
+        run: |
+          cd "$GITHUB_WORKSPACE"
+
+          UPSTREAM_COMMIT="${{ steps.compare.outputs.upstream_commit }}"
+          SHORT_SHA="${UPSTREAM_COMMIT:0:8}"
+          BRANCH_NAME="sync/upstream-${SHORT_SHA}"
+
+          echo "Creating sync branch:"
+          echo "$BRANCH_NAME"
+
+          git switch -c "$BRANCH_NAME"
+          git merge --no-ff FETCH_HEAD \
+            -m "Sync upstream code-modernization"
+
+          echo "SYNC_BRANCH=$BRANCH_NAME" >> "$GITHUB_ENV"
