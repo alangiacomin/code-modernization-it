@@ -5,6 +5,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   check-upstream:
@@ -115,3 +116,28 @@ jobs:
           cd "$GITHUB_WORKSPACE"
 
           git push origin "$SYNC_BRANCH"
+
+      - name: Create pull request
+        if: steps.compare.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM_COMMIT: ${{ steps.compare.outputs.upstream_commit }}
+        run: |
+          cd "$GITHUB_WORKSPACE"
+
+          gh pr create \
+            --base main \
+            --head "$SYNC_BRANCH" \
+            --title "chore: sync code-modernization from upstream" \
+            --body "## Upstream sync
+
+          Aggiornamento automatico del plugin \`code-modernization\` dalla repository ufficiale Anthropic.
+
+          ### Sorgente
+
+          - Upstream: anthropics/claude-plugins-official
+          - Path sincronizzato: \`plugins/code-modernization/\`
+          - Commit upstream: \`${UPSTREAM_COMMIT}\`
+
+          Questa PR è stata generata automaticamente.
+          Nessun merge automatico viene eseguito."
