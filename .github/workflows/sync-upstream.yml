@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   check-upstream:
@@ -108,3 +108,10 @@ jobs:
             -m "Sync upstream code-modernization"
 
           echo "SYNC_BRANCH=$BRANCH_NAME" >> "$GITHUB_ENV"
+
+      - name: Push sync branch
+        if: steps.compare.outputs.changed == 'true'
+        run: |
+          cd "$GITHUB_WORKSPACE"
+
+          git push origin "$SYNC_BRANCH"
