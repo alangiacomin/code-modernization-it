@@ -1,0 +1,71 @@
+name: Sync upstream code-modernization
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check-upstream:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install git-filter-repo
+        run: |
+          python3 -m pip install --user git-filter-repo
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream \
+            https://github.com/anthropics/claude-plugins-official.git
+
+          git fetch upstream main
+
+      - name: Prepare filtered upstream
+        run: |
+          TEMP_DIR="$(mktemp -d)"
+          echo "TEMP_DIR=$TEMP_DIR" >> "$GITHUB_ENV"
+
+          git clone --quiet \
+            https://github.com/anthropics/claude-plugins-official.git \
+            "$TEMP_DIR/upstream"
+
+          cd "$TEMP_DIR/upstream"
+
+          git filter-repo \
+            --path plugins/code-modernization/ \
+            --path-rename plugins/code-modernization/:
+
+      - name: Compare histories
+        run: |
+          cd "$TEMP_DIR/upstream"
+
+          UPSTREAM_COMMIT="$(git rev-parse HEAD)"
+          MAIN_COMMIT="$(git -C "$GITHUB_WORKSPACE" rev-parse main)"
+
+          echo "Filtered upstream commit:"
+          echo "$UPSTREAM_COMMIT"
+
+          echo
+          echo "Repository main commit:"
+          echo "$MAIN_COMMIT"
+
+          echo
+          echo "Filtered upstream root:"
+          git ls-tree --name-only HEAD
+
+          echo
+          echo "Last filtered upstream commits:"
+          git log --oneline -5
+
+          echo
+          echo "Difference against main:"
+
+          git diff --stat "$MAIN_COMMIT" HEAD || true
