@@ -43,12 +43,19 @@ jobs:
             --path plugins/code-modernization/ \
             --path-rename plugins/code-modernization/:
 
+      - name: Import filtered upstream history
+        run: |
+          cd "$GITHUB_WORKSPACE"
+
+          git fetch "$TEMP_DIR/upstream" main
+
       - name: Compare histories
         run: |
-          cd "$TEMP_DIR/upstream"
+          cd "$GITHUB_WORKSPACE"
 
-          UPSTREAM_COMMIT="$(git rev-parse HEAD)"
-          MAIN_COMMIT="$(git -C "$GITHUB_WORKSPACE" rev-parse main)"
+          UPSTREAM_COMMIT="$(git rev-parse FETCH_HEAD)"
+          MAIN_COMMIT="$(git rev-parse main)"
+          MERGE_BASE="$(git merge-base main FETCH_HEAD)"
 
           echo "Filtered upstream commit:"
           echo "$UPSTREAM_COMMIT"
@@ -58,14 +65,17 @@ jobs:
           echo "$MAIN_COMMIT"
 
           echo
+          echo "Common ancestor:"
+          echo "$MERGE_BASE"
+
+          echo
           echo "Filtered upstream root:"
-          git ls-tree --name-only HEAD
+          git -C "$TEMP_DIR/upstream" ls-tree --name-only HEAD
 
           echo
           echo "Last filtered upstream commits:"
-          git log --oneline -5
+          git -C "$TEMP_DIR/upstream" log --oneline -5
 
           echo
-          echo "Difference against main:"
-
-          git diff --stat "$MAIN_COMMIT" HEAD || true
+          echo "Changes since common ancestor:"
+          git diff --stat main...FETCH_HEAD
