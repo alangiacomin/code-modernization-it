@@ -99,13 +99,15 @@ jobs:
 
           UPSTREAM_COMMIT="${{ steps.compare.outputs.upstream_commit }}"
           SHORT_SHA="${UPSTREAM_COMMIT:0:8}"
-          BRANCH_NAME="sync/upstream-${SHORT_SHA}"
+          BRANCH_NAME="sync/code-modernization-${SHORT_SHA}"
 
           echo "Creating sync branch:"
           echo "$BRANCH_NAME"
 
           git switch -c "$BRANCH_NAME"
-          git merge --no-ff FETCH_HEAD \
+          # La storia filtrata ha il plugin alla radice: -Xsubtree la
+          # riallinea a plugins/code-modernization/ del marketplace.
+          git merge --no-ff -Xsubtree=plugins/code-modernization FETCH_HEAD \
             -m "Sync upstream code-modernization"
 
           echo "SYNC_BRANCH=$BRANCH_NAME" >> "$GITHUB_ENV"
@@ -136,7 +138,7 @@ jobs:
           ### Sorgente
 
           - Upstream: anthropics/claude-plugins-official
-          - Path sincronizzato: \`plugins/code-modernization/\`
+          - Path sincronizzato: \`plugins/code-modernization/\` (upstream) -> \`plugins/code-modernization/\` (questo repository)
           - Commit upstream: \`${UPSTREAM_COMMIT}\`
 
           Questa PR è stata generata automaticamente.

@@ -7,7 +7,7 @@ Questa guida descrive come lavorare sulla versione italiana di `code-modernizati
 La repository italiana è:
 
 ```text
-alangiacomin/code-modernization-it
+alangiacomin/claude-marketplace
 ```
 
 Il branch stabile è:
@@ -60,10 +60,10 @@ Le modifiche italiane possono essere effettuate normalmente sui file del reposit
 Per esempio:
 
 ```text
-README.md
-CHANGELOG.md
-commands/
-agents/
+plugins/code-modernization/README.md
+plugins/code-modernization/CHANGELOG.md
+plugins/code-modernization/commands/
+plugins/code-modernization/agents/
 ```
 
 oppure nei file relativi alle istruzioni, ai testi mostrati all'utente o alla documentazione.
@@ -99,13 +99,13 @@ Modificare i file con l'editor preferito.
 Nel nostro ambiente è possibile utilizzare Kate:
 
 ```bash
-kate README.md
+kate plugins/code-modernization/README.md
 ```
 
 oppure:
 
 ```bash
-kate .github/workflows/sync-upstream.yml
+kate .github/workflows/sync-upstream-code-modernization.yml
 ```
 
 ---
@@ -209,7 +209,7 @@ In questo caso non viene creato nulla.
 Non vengono creati:
 
 ```text
-sync/upstream-XXXXXXX
+sync/code-modernization-XXXXXXX
 ```
 
 e non viene aperta alcuna Pull Request.
@@ -228,7 +228,7 @@ Se vengono rilevate modifiche, la Action:
 4. crea un branch:
 
 ```text
-sync/upstream-XXXXXXXX
+sync/code-modernization-XXXXXXXX
 ```
 
 5. esegue il merge dell'upstream nel branch;
@@ -417,7 +417,7 @@ Il repository dovrebbe risultare pulito.
 I branch:
 
 ```text
-sync/upstream-XXXXXXXX
+sync/code-modernization-XXXXXXXX
 ```
 
 sono branch temporanei generati automaticamente dalla Action.
@@ -451,7 +451,7 @@ plugins/code-modernization/
 La Action si trova in:
 
 ```text
-.github/workflows/sync-upstream.yml
+.github/workflows/sync-upstream-code-modernization.yml
 ```
 
 Se bisogna modificarla, farlo con attenzione perché è parte dell'infrastruttura del progetto.
@@ -466,7 +466,7 @@ Dopo la modifica:
 
 ```bash
 git diff --check
-git diff -- .github/workflows/sync-upstream.yml
+git diff -- .github/workflows/sync-upstream-code-modernization.yml
 ```
 
 Controllare il diff prima del commit.
@@ -562,7 +562,7 @@ Anthropic modifica
         ↓
 Action
         ↓
-sync/upstream-XXXX
+sync/code-modernization-XXXX
         ↓
 Pull Request
         ↓

@@ -82,7 +82,7 @@ echo "==> Ultimi commit filtrati"
 git log --oneline -5
 
 echo
-echo "==> Contenuto della root filtrata"
+echo "==> Contenuto della root filtrata (verrà riallineato a plugins/code-modernization/ con -Xsubtree)"
 
 git ls-tree --name-only HEAD
 

@@ -1,0 +1,18 @@
+{
+  "name": "alan.giacomin",
+  "owner": {
+    "name": "Alan Giacomin",
+    "email": "alan.giacomin@gmail.com"
+  },
+  "metadata": {
+    "description": "Marketplace centralizzato dei plugin Claude Code"
+  },
+  "plugins": [
+    {
+      "name": "code-modernization",
+      "source": "./plugins/code-modernization",
+      "description": "Modernizzazione guidata di qualsiasi codebase legacy (versione italiana del plugin Anthropic)",
+      "version": "1.0.0"
+    }
+  ]
+}

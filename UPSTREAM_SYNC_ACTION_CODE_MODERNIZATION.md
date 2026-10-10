@@ -1,25 +1,28 @@
-# Upstream Sync Action
+# Upstream Sync Action — code-modernization
 
 ## Scopo
 
 La GitHub Action `Sync upstream code-modernization` mantiene sincronizzata la repository italiana con il plugin ufficiale `code-modernization` di Anthropic.
 
-La repository italiana contiene **solo** il contenuto del plugin:
+La repository (marketplace `alan.giacomin`) contiene più plugin, ciascuno in una sottocartella di `plugins/`. Il plugin sincronizzato vive in:
 
 ```text
-.claude-plugin/
-CHANGELOG.md
-LICENSE
-README.md
-agents/
-assets/
-commands/
-hooks/
-scripts/
-tests/
-tsconfig.json
-workflows/
+plugins/code-modernization/
+├── .claude-plugin/
+├── CHANGELOG.md
+├── LICENSE
+├── README.md
+├── agents/
+├── assets/
+├── commands/
+├── hooks/
+├── scripts/
+├── tests/
+├── tsconfig.json
+└── workflows/
 ```
+
+Nella radice restano i file del marketplace (`.claude-plugin/marketplace.json`, `README.md`) e quelli operativi (`.github/`, `tools/`, `OPERATIONS.md`, `UPSTREAM_SYNC_ACTION_CODE_MODERNIZATION.md`), che la sincronizzazione non tocca.
 
 La repository ufficiale Anthropic, invece, contiene molti plugin. La Action importa esclusivamente:
 
@@ -27,7 +30,7 @@ La repository ufficiale Anthropic, invece, contiene molti plugin. La Action impo
 plugins/code-modernization/
 ```
 
-e lo porta alla root della repository italiana.
+e lo porta in `plugins/code-modernization/` della repository.
 
 ---
 
@@ -36,7 +39,7 @@ e lo porta alla root della repository italiana.
 ### Repository italiana
 
 ```text
-https://github.com/alangiacomin/code-modernization-it
+https://github.com/alangiacomin/claude-marketplace
 ```
 
 È la repository ufficiale della versione italiana.
@@ -90,7 +93,7 @@ confronto con main italiano
         └── modifiche presenti
                 │
                 ▼
-        branch sync/upstream-XXXX
+        branch sync/code-modernization-XXXX
                 │
                 ▼
              push
@@ -247,7 +250,7 @@ README.md
 
 e analogamente per tutti gli altri file.
 
-Questa operazione produce una storia Git compatibile con la struttura della repository italiana.
+La storia filtrata ha quindi il plugin alla radice. Il riallineamento a `plugins/code-modernization/` avviene al momento del merge (Fase 9) con `-Xsubtree`: in questo modo la storia filtrata resta identica a quella già presente in `main` e il merge base continua a funzionare.
 
 ---
 
@@ -329,7 +332,7 @@ Non vengono creati:
 Se vengono rilevate modifiche, viene creato un branch con il formato:
 
 ```text
-sync/upstream-XXXXXXXX
+sync/code-modernization-XXXXXXXX
 ```
 
 dove `XXXXXXXX` sono i primi 8 caratteri del commit upstream filtrato.
@@ -337,7 +340,7 @@ dove `XXXXXXXX` sono i primi 8 caratteri del commit upstream filtrato.
 Esempio:
 
 ```text
-sync/upstream-03386984
+sync/code-modernization-03386984
 ```
 
 Il branch viene creato a partire da `main`.
@@ -349,9 +352,11 @@ Il branch viene creato a partire da `main`.
 La Action esegue:
 
 ```bash
-git merge --no-ff FETCH_HEAD \
+git merge --no-ff -Xsubtree=plugins/code-modernization FETCH_HEAD \
   -m "Sync upstream code-modernization"
 ```
+
+L'opzione `-Xsubtree=plugins/code-modernization` sposta i file della storia filtrata (radice) nella sottocartella del plugin. I file nuovi upstream finiscono quindi in `plugins/code-modernization/` e non nella radice del marketplace.
 
 Il merge è intenzionalmente separato dal branch `main`.
 
@@ -396,7 +401,7 @@ viene pubblicato il branch su GitHub.
 Esempio:
 
 ```text
-sync/upstream-a1b2c3d4
+sync/code-modernization-a1b2c3d4
 ```
 
 ---
@@ -413,7 +418,7 @@ con:
 
 ```text
 base = main
-head = sync/upstream-XXXXXXXX
+head = sync/code-modernization-XXXXXXXX
 ```
 
 Il titolo della PR è:
@@ -445,7 +450,7 @@ sul branch `main`.
 Il merge Git avviene esclusivamente sul branch temporaneo:
 
 ```text
-sync/upstream-XXXXXXXX
+sync/code-modernization-XXXXXXXX
 ```
 
 La Pull Request viene poi lasciata alla revisione umana.
@@ -465,14 +470,14 @@ Il maintainer decide se:
 Il file principale è:
 
 ```text
-.github/workflows/sync-upstream.yml
+.github/workflows/sync-upstream-code-modernization.yml
 ```
 
 Per modificarlo localmente:
 
 ```bash
 cd ~/Git/code-modernization-it
-kate .github/workflows/sync-upstream.yml
+kate .github/workflows/sync-upstream-code-modernization.yml
 ```
 
 Dopo ogni modifica è consigliato eseguire:
@@ -484,7 +489,7 @@ git diff --check
 e:
 
 ```bash
-git diff -- .github/workflows/sync-upstream.yml
+git diff -- .github/workflows/sync-upstream-code-modernization.yml
 ```
 
 Prima del commit verificare che il diff contenga esclusivamente le modifiche previste.
