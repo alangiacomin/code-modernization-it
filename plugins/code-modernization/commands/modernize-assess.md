@@ -1,8 +1,11 @@
 ---
-description: What am I dealing with? Inventory, complexity, debt, security and a recommended modernization pattern
-argument-hint: <system> [--show-secrets] | --portfolio <parent-dir>
+description: Con cosa ho a che fare? Inventario, complessità, debito, sicurezza e un pattern di modernizzazione consigliato
+argument-hint: <sistema> [--show-secrets] | --portfolio <cartella-padre>
 arguments: system
 ---
+
+**Language:** talk to the person in Italian, ask every question in Italian and write every document you generate in Italian,
+keeping in English only the technical tokens listed in `${CLAUDE_PLUGIN_ROOT}/LANGUAGE.md`.
 
 **Mode.** If `$ARGUMENTS` starts with `--portfolio`, run **Portfolio mode** on the
 directory that follows. Otherwise run **Single-system mode** on `$system`, the

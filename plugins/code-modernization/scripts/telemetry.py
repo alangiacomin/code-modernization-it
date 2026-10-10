@@ -89,8 +89,10 @@ GOAL_LABEL = re.compile(r"(?i)^goal\b\s*[:\u2013\u2014]?\s*(.*)$")
 GOAL_WORDS = re.compile(r"(?i)(understand|uplift|transform|reimagine|rewrite|rebuild)\b")
 GOAL_ALIASES = {"rewrite": "transform", "rebuild": "reimagine"}
 # the pop-up's own wording, when that is what was written down
-GOAL_PHRASES = [(re.compile(r"(?i)newer version|same technology"), 2), (re.compile(r"(?i)different technology|one piece at a time"), 3),
-                (re.compile(r"(?i)from scratch|new architecture"), 4), (re.compile(r"(?i)understand it|map it"), 1)]
+GOAL_PHRASES = [(re.compile(r"(?i)newer version|same technology|versione più recente|stessa tecnologia"), 2),
+                (re.compile(r"(?i)different technology|one piece at a time|tecnologia diversa|un pezzo alla volta"), 3),
+                (re.compile(r"(?i)from scratch|new architecture|da zero|nuova architettura"), 4),
+                (re.compile(r"(?i)understand it|map it|prima capirlo|mapparlo"), 1)]
 
 # What the code is written in: the dominant language of the map, as one of these numbers (0 unknown, 99 other).
 LANGS = {"cobol": 1, "jcl": 1, "java": 2, "jsp": 2, "c#": 3, "csharp": 3, "vb": 3, "vb.net": 3, "f#": 3, "python": 4, "php": 5,

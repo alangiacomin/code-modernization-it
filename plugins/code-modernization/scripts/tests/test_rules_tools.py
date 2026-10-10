@@ -183,7 +183,7 @@ class RenderTests(unittest.TestCase):
             self.assertEqual(run('render_rules.py', 's', '--workspace', ws).returncode, 0)
             text = open(os.path.join(ws, 'analysis/s/BUSINESS_RULES.md'), encoding='utf-8').read()
             self.assertIn('## Rules folded into another', text)
-            self.assertIn('- Twiddle factors (b.c:3-4) into Twiddle table', text)
+            self.assertIn('- Twiddle factors (b.c:3-4) → Twiddle table', text)
             self.assertIn('**Also cited:** b.c:3-4', text)
             self.assertNotIn('\n# fake heading', text)
 

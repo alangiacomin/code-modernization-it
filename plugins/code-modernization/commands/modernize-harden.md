@@ -1,8 +1,11 @@
 ---
-description: Security scan of the legacy system with a reviewable remediation patch (OWASP, CWE, CVEs, secrets, injection)
-argument-hint: <system> [--show-secrets]
+description: Scansione di sicurezza del sistema legacy con una patch di rimedio da rivedere (OWASP, CWE, CVE, segreti, injection)
+argument-hint: <sistema> [--show-secrets]
 arguments: system
 ---
+
+**Language:** talk to the person in Italian, ask every question in Italian and write every document you generate in Italian,
+keeping in English only the technical tokens listed in `${CLAUDE_PLUGIN_ROOT}/LANGUAGE.md`.
 
 Run a **security hardening pass** on the legacy system: find vulnerabilities, rank them, and produce a
 reviewable patch for the critical ones. `$system` is the first argument; flags go after it

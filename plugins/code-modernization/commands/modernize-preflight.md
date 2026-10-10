@@ -1,8 +1,11 @@
 ---
-description: Run this first — checks the environment, records where the code lives, and says what to fix before anything else runs
-argument-hint: <system> [target-stack] [--source <path>]
+description: Da eseguire per primo — controlla l'ambiente, registra dove si trova il codice e indica cosa sistemare prima di tutto il resto
+argument-hint: <sistema> [stack-di-destinazione] [--source <percorso>]
 arguments: system target_stack
 ---
+
+**Language:** talk to the person in Italian, ask every question in Italian and write every document you generate in Italian,
+keeping in English only the technical tokens listed in `${CLAUDE_PLUGIN_ROOT}/LANGUAGE.md`.
 
 Check whether this environment can analyze — and eventually modernize — the
 system `$system`, and tell the user exactly what to fix before the other
@@ -37,8 +40,9 @@ system answers in seconds. Ask **only** the five questions below — add none �
 and accept "don't know" for any of them.
 
 **Ask with the AskUserQuestion tool (a pop-up), never in chat text.** It takes
-at most four questions per call: ask 1–4 in one call and 5 in a second. Give
-each question its own options, one of them "Don't know", and let the person
+at most four questions per call: ask 1–4 in one call and 5 in a second. Write the questions and
+options in Italian. Give
+each question its own options, one of them "Non so", and let the person
 type an answer instead. Do not print the questions in your reply and do not
 answer them yourself. While the pop-up is open, run the other checks — none of
 them needs the answers.
@@ -57,7 +61,7 @@ them needs the answers.
 5. **Off limits** — Is anything in this code not allowed to change in this
    pass (a component another team owns, a frozen branch, generated code)?
 
-Write each question in a section of `PREFLIGHT.md` called **Answers**, with the
+Write each question (in Italian) in a section of `PREFLIGHT.md` called **Answers** (keep this heading in English), with the
 person's answer **verbatim** under it — never paraphrase away a caveat. If a
 question has no answer (the tool is unavailable, as in a headless run, or the
 person skips it), write **an open item the human must fill in** under it. All

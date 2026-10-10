@@ -1,8 +1,11 @@
 ---
-description: Confirm or correct the business rules that need a person's judgement; the plan and the build read your answers
-argument-hint: <system> [flagged|p0|all]
+description: Conferma o correggi le regole di business che richiedono il giudizio di una persona; piano e sviluppo leggono le tue risposte
+argument-hint: <sistema> [flagged|p0|all]
 arguments: system scope
 ---
+
+**Language:** talk to the person in Italian, ask every question in Italian and write every document you generate in Italian,
+keeping in English only the technical tokens listed in `${CLAUDE_PLUGIN_ROOT}/LANGUAGE.md`.
 
 Ask a person to decide the business rules in `analysis/$system/BUSINESS_RULES.md` that depend on judgement, and record each answer so the plan and the build honor it. Agents mined the rules and a second agent checked every citation, but only someone who knows the business can say whether a rule is *right*: whether a truncation is intended or a defect, whether a threshold is still the policy. This command asks in a pop-up and never edits `BUSINESS_RULES.md`.
 
@@ -17,7 +20,7 @@ Say how many rules will be asked (about a minute per ten). If none is left, say 
 
 ## 2 — Ask
 
-Use the AskUserQuestion tool, never chat text, up to four rules per call. One question per rule: its id as the header; the title, the plain-English statement, its Given/When/Then in one line, the cited lines (`file:line`) and the suspected defect or SME question if it has one as the question; and three options: **Right** (the rule is correct and wanted), **Wrong, or not wanted** (it misdescribes the code, or the code does this today but should not), **Not sure** (needs a discussion). The person can type a note instead of choosing: what is right, or the question that needs answering. Keep it, in their words. Stop when they say to. Verdicts the person already typed in the request (`RULE-004 wrong: it truncates on purpose`) are recorded as given, with no pop-up for those rules. Without the tool and without typed verdicts (a headless run) do not guess: leave every rule unreviewed and say so.
+Use the AskUserQuestion tool, never chat text, up to four rules per call. One question per rule, written in Italian: its id as the header; the title, the plain-language statement, its Given/When/Then in one line, the cited lines (`file:line`) and the suspected defect or SME question if it has one as the question; and three options: **Corretta** (the rule is correct and wanted), **Sbagliata o non voluta** (it misdescribes the code, or the code does this today but should not), **Non sono sicuro** (needs a discussion). The person can type a note instead of choosing: what is right, or the question that needs answering. Keep it, in their words. Stop when they say to. Verdicts the person already typed in the request (`RULE-004 wrong: it truncates on purpose`) are recorded as given, with no pop-up for those rules. Without the tool and without typed verdicts (a headless run) do not guess: leave every rule unreviewed and say so.
 
 ## 3 — Record
 

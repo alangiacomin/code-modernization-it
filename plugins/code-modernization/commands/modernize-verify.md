@@ -1,8 +1,11 @@
 ---
-description: Prove the modernized code behaves like the legacy, with an independent re-check and one verdict per module
-argument-hint: <system> [module]
+description: Dimostra che il codice modernizzato si comporta come il legacy, con una verifica indipendente e un verdetto per modulo
+argument-hint: <sistema> [modulo]
 arguments: system module
 ---
+
+**Language:** talk to the person in Italian, ask every question in Italian and write every document you generate in Italian,
+keeping in English only the technical tokens listed in `${CLAUDE_PLUGIN_ROOT}/LANGUAGE.md`.
 
 Re-check, independently, that the modernized code of `$system` behaves like the legacy, and give each module one
 verdict: **PROVEN**, **PARTLY PROVEN** or **NOT PROVEN**. Run it after `transform`, `uplift` or `reimagine`, in a

@@ -113,10 +113,10 @@ def main(argv):
     stats = result.get('stats') or {}
 
     doc = [f'# Business Rules — {one_line(system, 80)}', '',
-           f"At extraction: {len(rules)} confirmed rules ({sum(1 for r in rules if r.get('priority') == 'P0')} P0); "
-           f"later steps may add or correct rules below. "
-           f"Each citation was checked by a second agent that read the cited lines; "
-           f"{len(result.get('rejectedRules') or [])} candidate rules were refuted and left out.", '',
+           f"All'estrazione: {len(rules)} regole confermate ({sum(1 for r in rules if r.get('priority') == 'P0')} P0); "
+           f"i passi successivi possono aggiungere o correggere regole qui sotto. "
+           f"Ogni citazione è stata verificata da un secondo agente che ha letto le righe citate; "
+           f"{len(result.get('rejectedRules') or [])} regole candidate sono state confutate ed escluse.", '',
            '| ID | Name | Category | Priority | Source | Confidence |', '|---|---|---|---|---|---|']
     for n, r in numbered:
         doc.append(f"| RULE-{n:03d} | {one_line(r.get('name'), 80)} | {one_line(r.get('category'), 20)} | "
@@ -134,26 +134,26 @@ def main(argv):
     if sme:
         for n, r in sme:
             doc.append(f"- **RULE-{n:03d}** ({one_line(r.get('confidence'), 10)}): "
-                       f"{one_line(r.get('smeQuestion') or 'Confirm this rule with someone who knows the system.', 400)}")
+                       f"{one_line(r.get('smeQuestion') or 'Conferma questa regola con chi conosce il sistema.', 400)}")
     else:
-        doc.append('None: every confirmed rule has High confidence.')
+        doc.append('Nessuna: ogni regola confermata ha confidenza High.')
     doc.append('')
 
     flags = result.get('injectionFlags') or []
     if flags:
         doc += ['## ⚠ Instruction-shaped content found in source', '',
-                'These lines of the source tried to steer automated analysis. A person should look at them.', '']
+                'Queste righe del sorgente hanno cercato di pilotare l\'analisi automatica. Una persona dovrebbe guardarle.', '']
         doc += [f'- {one_line(f, 300)}' for f in flags]
         doc.append('')
 
     folded = [f for f in (result.get('foldedRules') or []) if isinstance(f, dict)]
     if folded:
         doc += ['## Rules folded into another', '',
-                'These rules described the same behavior as another rule in a different place, so they were merged into it '
-                '(the kept rule lists their locations under "Also cited"):', '']
-        doc += [f"- {one_line(f.get('name'), 100)} ({one_line(f.get('source'), 100)}) into {one_line(f.get('into'), 100)}" for f in folded[:100]]
+                'Queste regole descrivevano lo stesso comportamento di un\'altra regola in un altro punto, quindi sono state fuse in essa '
+                '(la regola mantenuta ne elenca le posizioni sotto "Also cited"):', '']
+        doc += [f"- {one_line(f.get('name'), 100)} ({one_line(f.get('source'), 100)}) → {one_line(f.get('into'), 100)}" for f in folded[:100]]
         if len(folded) > 100:
-            doc.append(f'- … and {len(folded) - 100} more')
+            doc.append(f'- … e altre {len(folded) - 100}')
         doc.append('')
 
     gaps = [('never attempted (token budget or agent cap)', stats.get('skippedModules')),
@@ -164,11 +164,11 @@ def main(argv):
              [f"{one_line(u.get('name'), 80)} ({one_line(u.get('source'), 80)})" for u in (result.get('unverifiedRules') or [])])]
     gaps = [(label, items) for label, items in gaps if items]
     if gaps:
-        doc += ['## Coverage gaps', '', 'These parts were NOT fully mined:', '']
+        doc += ['## Coverage gaps', '', 'Queste parti NON sono state estratte per intero:', '']
         for label, items in gaps:
             doc.append(f"- **{len(items)} {label}:** " + ', '.join(one_line(i, 100) for i in items[:30]) + (' …' if len(items) > 30 else ''))
         if result.get('rerunModules'):
-            doc.append(f"\nA follow-up run for the {len(result['rerunModules'])} affected shard(s) covers them.")
+            doc.append(f"\nUna nuova esecuzione per i {len(result['rerunModules'])} shard interessati le copre.")
         doc.append('')
 
     with open(os.path.join(base, 'BUSINESS_RULES.md'), 'w', encoding='utf-8') as handle:
@@ -177,7 +177,7 @@ def main(argv):
     objects = result.get('dataObjects') or []
     dto = [f'# Data Objects — {one_line(system, 80)}', '']
     if not objects:
-        dto.append('No data objects were cataloged.')
+        dto.append('Nessun oggetto dati è stato catalogato.')
     for obj in objects:
         dto += [f"## {one_line(obj.get('name'), 100)}", f"Source: `{one_line(obj.get('source'), 160).replace(chr(39), '')}`", '',
                 '| Field | Type | Note |', '|---|---|---|']
@@ -185,7 +185,7 @@ def main(argv):
             dto.append(f"| {one_line(field.get('name'), 80)} | {one_line(field.get('type'), 60)} | {one_line(field.get('note'), 160)} |")
         used = obj.get('consumedBy') or []
         if used:
-            dto += ['', 'Used by: ' + ', '.join(one_line(u, 80) for u in used)]
+            dto += ['', 'Usato da: ' + ', '.join(one_line(u, 80) for u in used)]
         dto.append('')
     with open(os.path.join(base, 'DATA_OBJECTS.md'), 'w', encoding='utf-8') as handle:
         handle.write('\n'.join(dto))

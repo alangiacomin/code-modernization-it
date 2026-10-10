@@ -68,6 +68,8 @@ plugins/code-modernization/agents/
 
 oppure nei file relativi alle istruzioni, ai testi mostrati all'utente o alla documentazione.
 
+Regola per limitare i conflitti col sync upstream: si traducono solo `description` e `argument-hint`, le domande poste all'utente e le etichette/frasi dei report; ogni comando e agente contiene una direttiva di lingua che rimanda a `plugins/code-modernization/LANGUAGE.md`. Non si traducono i token letti dal codice (elenco in `LANGUAGE.md`). Nelle PR di sync, i file nuovi arrivano in inglese e vanno adattati allo stesso modo.
+
 Prima di modificare:
 
 ```bash

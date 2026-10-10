@@ -1,8 +1,11 @@
 ---
-description: Rewrite one legacy module in the target stack, with tests that prove it behaves the same
-argument-hint: <system> [module] [target-stack]
+description: Riscrive un modulo legacy nello stack di destinazione, con test che dimostrano che si comporta allo stesso modo
+argument-hint: <sistema> [modulo] [stack-di-destinazione]
 arguments: system module target_stack
 ---
+
+**Language:** talk to the person in Italian, ask every question in Italian and write every document you generate in Italian,
+keeping in English only the technical tokens listed in `${CLAUDE_PLUGIN_ROOT}/LANGUAGE.md`.
 
 Transform module **`$module`** of `$system` into **$target_stack**, with proof of behavioral
 equivalence. This is one vertical slice of the strangler fig; output goes to

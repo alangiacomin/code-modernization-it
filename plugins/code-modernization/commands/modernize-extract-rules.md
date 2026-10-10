@@ -1,8 +1,11 @@
 ---
-description: Mine the business rules out of the code into testable Given/When/Then rule cards with file:line citations
-argument-hint: <system> [module-pattern]
+description: Estrae le regole di business dal codice in schede di regole testabili Given/When/Then con citazioni file:riga
+argument-hint: <sistema> [pattern-modulo]
 arguments: system module_pattern
 ---
+
+**Language:** talk to the person in Italian, ask every question in Italian and write every document you generate in Italian,
+keeping in English only the technical tokens listed in `${CLAUDE_PLUGIN_ROOT}/LANGUAGE.md`.
 
 Extract the **business rules** embedded in the system into a structured, testable
 specification: the institutional knowledge that is locked in code and in the heads of
@@ -43,8 +46,8 @@ about 8.8M tokens and 50 to 80 minutes; a tiny system in lens mode is 15 to 40 a
 
 **With more than 12 shards, ask before launching with the AskUserQuestion tool** (a pop-up;
 a reply that only mentions the estimate is easy to miss and is not a gate). Put the shard
-count, lines and estimate in the question; offer "Run all N shards", "Only a slice (say
-which, as a module pattern)" and "Cancel". On a slice, rebuild the list with that pattern.
+count, lines and estimate in the question; write the question and options in Italian: offer "Esegui tutti gli N shard", "Solo una parte (indica
+quale, come pattern di modulo)" and "Annulla". On a slice, rebuild the list with that pattern.
 With 12 shards or fewer, launch at once and say how many shards and the rough estimate.
 A run is capped at 1000 agents: for more than about 70 shards, launch parts of at most 70,
 one `Workflow` call after another, and merge the results (concatenate rules, de-duplicate

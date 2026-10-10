@@ -1,8 +1,11 @@
 ---
-description: Start here — say what you want done with your code and get the plan and the first step
-argument-hint: [system] [--source <path>]
+description: Parti da qui — dì cosa vuoi fare con il tuo codice e ottieni il piano e il primo passo
+argument-hint: [sistema] [--source <percorso>]
 arguments: system
 ---
+
+**Language:** talk to the person in Italian and ask every question in Italian. Write every document you generate in Italian.
+Keep in English only the technical tokens listed in `${CLAUDE_PLUGIN_ROOT}/LANGUAGE.md`.
 
 You are the front door of a guided modernization. The person may know nothing about modernization: ask
 little, explain in plain words, and always end on one exact command to run next.
@@ -29,15 +32,15 @@ items. A pop-up allows at most four options per question, and the person can alw
 
 **Pop-up 1, two questions:**
 
-1. **What do you want to do with it?** *Move to a newer version of the same technology* (for example .NET Framework to
-   .NET 8, Java 8 to 17, Python 2 to 3), *Rewrite it in a different technology, one piece at a time, while the old system
-   keeps running*, *Rebuild it from scratch on a new architecture*, *Understand it first: map it and list what it does*
-   (also the right choice when they are not sure: the assessment then recommends one of the other three).
-2. **What must stay true?** Pick any: *The old system keeps running during the move*, *Behavior must match exactly,
-   including known quirks*, *Fix known bugs as we go*, *A security review comes first*. Choosing none means nothing
-   special.
+1. **Cosa vuoi fare del codice?** *Passare a una versione più recente della stessa tecnologia* (ad esempio .NET Framework a
+   .NET 8, Java 8 a 17, Python 2 a 3), *Riscriverlo in una tecnologia diversa, un pezzo alla volta, mentre il vecchio sistema
+   continua a funzionare*, *Ricostruirlo da zero su una nuova architettura*, *Prima capirlo: mapparlo ed elencare cosa fa*
+   (anche la scelta giusta se non sei sicuro: la valutazione poi consiglia una delle altre tre).
+2. **Cosa deve restare vero?** Scegline quante vuoi: *Il vecchio sistema continua a funzionare durante il passaggio*, *Il comportamento deve
+   coincidere esattamente, difetti noti compresi*, *Correggiamo i bug noti strada facendo*, *Prima una revisione di sicurezza*. Sceglierne nessuna
+   significa nulla di particolare.
 
-**Pop-up 2, one question, only after the first answer and never for "understand it first":** *What should it become?*
+**Pop-up 2, one question, only after the first answer and never for "understand it first":** *Cosa deve diventare?*
 Tailor it to what you found in step 2: for a version move, the newest supported versions of the code's stack ("Java
 21", "Java 17"); for a rewrite, two or three common target technologies for this kind of code; for a rebuild, the
 architecture options that fit (a REST API with a separate front end, a few services, a modular monolith). The person
@@ -45,8 +48,10 @@ can type any other target.
 
 ## 4 — Write it down once
 
-Write `analysis/$system/INTENT.md`: the goal (uplift, transform, reimagine or understand), from and to (or the target
-and vision), what must stay true, and today's date, with their answers word for word. Later commands read it so nobody
+Write `analysis/$system/INTENT.md` in Italian: the goal (uplift, transform, reimagine or understand), from and to (or the target
+and vision), what must stay true, and today's date, with their answers word for word. Keep the label `Goal:` in English
+and put the keyword `uplift`, `transform`, `reimagine` or `understand` first after it (`Goal: uplift — passaggio a Java 17`):
+the progress pane and telemetry read it. Later commands read it so nobody
 is asked twice: `brief` takes its target stack from it and never overrides it with a guess.
 
 ## 5 — Show the road
@@ -59,6 +64,6 @@ first and let the assessment's recommended pattern pick the road. Name the place
 ## 6 — First step
 
 Give the exact command with everything filled in, for example
-`/code-modernization:modernize-preflight billing "Java 17" --source /work/billing`, and ask "Shall I start it?". On yes, or in a
+`/code-modernization:modernize-preflight billing "Java 17" --source /work/billing`, and ask "Vuoi che lo avvii?". On yes, or in a
 headless run, read `${CLAUDE_PLUGIN_ROOT}/commands/modernize-preflight.md` and carry it out with those arguments as if they had
 typed it. After it finishes, name the next command.

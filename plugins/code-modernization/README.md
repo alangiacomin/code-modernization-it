@@ -1,6 +1,6 @@
 # Code Modernization
 
-> **Premessa:** questo repository è un clone del plugin [`code-modernization`](https://github.com/anthropics/claude-plugins-official/tree/main/plugins/code-modernization) di Anthropic. L'unica differenza è che tutto (README, comandi, agenti, workflow) è tradotto in italiano.
+> **Premessa:** questo repository è un clone del plugin [`code-modernization`](https://github.com/anthropics/claude-plugins-official/tree/main/plugins/code-modernization) di Anthropic. L'unica differenza è l'italiano: README, descrizioni di comandi e agenti, domande all'utente e report generati sono in italiano (la direttiva è in [LANGUAGE.md](LANGUAGE.md)). Nomi dei comandi, parole chiave e file letti dagli script restano in inglese.
 >
 > Per le operazioni di tutti i giorni (modificare le traduzioni, gestire le Pull Request di sincronizzazione con l'upstream) la guida di riferimento è [OPERATIONS.md](../../OPERATIONS.md). [UPSTREAM_SYNC_ACTION_CODE_MODERNIZATION.md](../../UPSTREAM_SYNC_ACTION_CODE_MODERNIZATION.md) descrive invece il funzionamento tecnico della GitHub Action di sincronizzazione: non serve metterci mano, se non in caso di problemi.
 

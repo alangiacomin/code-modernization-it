@@ -1,8 +1,11 @@
 ---
-description: Show me the structure — dependencies, data flow, entry points and business flows, as an interactive map
-argument-hint: <system> [--graph <file>] [--no-describe]
+description: Mostra la struttura — dipendenze, flusso dei dati, punti di ingresso e flussi di business, come mappa interattiva
+argument-hint: <sistema> [--graph <file>] [--no-describe]
 arguments: system
 ---
+
+**Language:** talk to the person in Italian, ask every question in Italian and write every document you generate in Italian,
+keeping in English only the technical tokens listed in `${CLAUDE_PLUGIN_ROOT}/LANGUAGE.md`.
 
 Build a **dependency and topology map** of the system and render it as an
 interactive page. The assessment found the domains; this goes one level down:
@@ -130,8 +133,8 @@ paragraph of 55 to 90 words**: what the node does in business terms, then what i
 calls, reads, writes or is called by. The viewer shows it in the sidebar.
 
 1. Count the leaf nodes. If there are **more than 40**, ask first with the
-   AskUserQuestion tool (a pop-up): describe all N nodes (N subagents), the 40
-   largest by `loc` (the default), or none. With no pop-up available (a headless
+   AskUserQuestion tool (a pop-up): write the question in Italian: describe all N nodes (N subagents), the 40
+   largest by `loc` (the default), or none (options "Tutti gli N nodi", "I 40 più grandi", "Nessuno"). With no pop-up available (a headless
    run) do the 40 largest. Say how many agents will run.
 2. Spawn one **legacy-analyst** subagent per chosen node, in parallel batches of
    about 8. Give each only that node's *packet*: about 150 lines of its source (none

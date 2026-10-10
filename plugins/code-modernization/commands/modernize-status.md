@@ -1,8 +1,11 @@
 ---
-description: Where am I? Progress, what is stale, and the exact next command to run — start here when unsure
-argument-hint: <system>
+description: Dove sono? Avanzamento, cosa è obsoleto e l'esatto comando successivo da eseguire — parti da qui se hai dubbi
+argument-hint: <sistema>
 arguments: system
 ---
+
+**Language:** talk to the person in Italian, ask every question in Italian and write every document you generate in Italian,
+keeping in English only the technical tokens listed in `${CLAUDE_PLUGIN_ROOT}/LANGUAGE.md`.
 
 Report where the modernization of `$system` stands, in one screen. This command inspects and never modifies,
 except that it refreshes `analysis/$system/REPORT.html` (`python3

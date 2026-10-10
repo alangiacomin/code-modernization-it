@@ -1,8 +1,11 @@
 ---
-description: Same-stack version uplift (e.g. .NET Framework 4.8 to .NET 8, Java 8 to 17) — keep the code, fix the version deltas, prove nothing changed
-argument-hint: <system> [source-version] [target-version] [project-pattern]
+description: Aggiornamento di versione sullo stesso stack (es. .NET Framework 4.8 a .NET 8, Java 8 a 17) — mantiene il codice, corregge le differenze di versione, dimostra che nulla è cambiato
+argument-hint: <sistema> [versione-origine] [versione-destinazione] [pattern-progetto]
 arguments: system source_version target_version project_pattern
 ---
+
+**Language:** talk to the person in Italian, ask every question in Italian and write every document you generate in Italian,
+keeping in English only the technical tokens listed in `${CLAUDE_PLUGIN_ROOT}/LANGUAGE.md`.
 
 Uplift `$system` from **$source_version** to **$target_version**: same stack, newer version.
 The code is `legacy/$system`, often a symlink to where it really lives: say where it points (`readlink legacy/$system`) in one line before you start. If `legacy/$system` does not exist, stop and say so: nothing can run without the code, so the fix is `/code-modernization:modernize $system --source <path to the code>`. Run every subagent in the foreground and wait for its result: never end your turn while one is still running. Stop any server or other process you started (a legacy app on a local port, a watcher) before you finish, and say you did.
@@ -23,7 +26,7 @@ recorded outputs on the target only. That is fine, but label it honestly (Step 0
 ## Step 0 — Toolchain and version pinning (fail fast)
 
 1. **Pin the version pair exactly.** If the versions were not given, take them from `analysis/$system/INTENT.md` or the
-   brief. If either version is missing or vague (".NET" with no number), stop and ask. When the move spans several
+   brief. If either version is missing or vague (".NET" with no number), stop and ask in Italian. When the move spans several
    major versions or two things at once (a JDK and a framework: Java 8 with Spring 4 to Java 21 with Spring Boot 3),
    split it into hops that each build and pass their tests before the next starts (for example Java 8, 11, 17, 21),
    name the order in the plan, and treat each hop as its own pilot.

@@ -169,7 +169,7 @@ class Counts(Base):
         cases = [("- Goal: reimagine (rebuild it from scratch)", 4), ("## Goal\n- **Goal:** `uplift`. Then transform it.", 2),
                  ("## Goal\n**Transform** piece by piece", 3), ("- Goal: Understand it first", 1),
                  ("## Goal\n- **Goal:** `not-sure`. Run assess, then pick (uplift / transform / reimagine / understand).", 0),
-                 ("- Goal: Move to a newer version of the same technology", 2), ("- Goal: Rewrite it in a different technology", 3),
+                 ("- Goal: Prima capirlo: mapparlo ed elencare cosa fa", 1), ("- Goal: Passare a una versione più recente della stessa tecnologia", 2), ("- Goal: Rewrite it in a different technology", 3),
                  ("nothing here about it, but uplift is a word", 0), ("", 0)]
         for text, want in cases:
             self.assertEqual(tm.goal_code(text, None), want, text)

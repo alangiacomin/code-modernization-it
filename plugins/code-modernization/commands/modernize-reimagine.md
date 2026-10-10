@@ -1,8 +1,11 @@
 ---
-description: Rebuild the system from its extracted intent on a new architecture, with two human checkpoints
-argument-hint: <system> [target-vision]
+description: Ricostruisce il sistema a partire dall'intento estratto su una nuova architettura, con due checkpoint umani
+argument-hint: <sistema> [visione-di-destinazione]
 arguments: system
 ---
+
+**Language:** talk to the person in Italian, ask every question in Italian and write every document you generate in Italian,
+keeping in English only the technical tokens listed in `${CLAUDE_PLUGIN_ROOT}/LANGUAGE.md`.
 
 The first token of `$ARGUMENTS` is the system name (`$system`); **everything after it is the target
 vision**, usually several words, so do not truncate it (with none, use the one in `analysis/$system/INTENT.md`). Below, `<vision>` means that whole remainder.

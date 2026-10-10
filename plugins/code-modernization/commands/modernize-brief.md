@@ -1,8 +1,11 @@
 ---
-description: Write the phased Modernization Brief — the plan a steering committee approves and the build commands execute against
-argument-hint: <system> [target-stack]
+description: Scrive il Modernization Brief a fasi — il piano che un comitato direttivo approva e su cui si basano i comandi di sviluppo
+argument-hint: <sistema> [stack-di-destinazione]
 arguments: system target_stack
 ---
+
+**Language:** talk to the person in Italian, ask every question in Italian and write every document you generate in Italian,
+keeping in English only the technical tokens listed in `${CLAUDE_PLUGIN_ROOT}/LANGUAGE.md`.
 
 Synthesize everything in `analysis/$system/` into a **Modernization Brief**: the single
 document a steering committee approves and engineering executes. Target stack:
