@@ -12,7 +12,7 @@
       "name": "code-modernization",
       "source": "./plugins/code-modernization",
       "description": "Modernizzazione guidata di qualsiasi codebase legacy (versione italiana del plugin Anthropic)",
-      "version": "1.0.0"
+      "version": "1.0.1"
     }
   ]
 }

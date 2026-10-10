@@ -1,6 +1,6 @@
 {
   "name": "code-modernization",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Modernizzazione guidata per qualsiasi codebase legacy: parti da /modernize, ottieni una valutazione, una mappa interattiva, le regole di business estratte dal codice e un piano che approvi, poi un aggiornamento, una riscrittura o una ricostruzione con prova indipendente che il nuovo codice si comporta come il vecchio. Include hardening di sicurezza, un report di una pagina, agenti specialisti e un pannello di avanzamento live opzionale (accesso anticipato).",
   "author": {
     "name": "Anthropic",
